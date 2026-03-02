@@ -1,0 +1,77 @@
+﻿# ===============================
+# Visual Studio / WPF / .NET
+# ===============================
+
+# Build results
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Dd]ebug*/
+[Rr]elease*/
+x64/
+x86/
+[Aa]rm/
+[Aa]rm64/
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+.nuget/
+.nuget/packages/
+
+# Visual Studio cache
+.vs/
+.vscode/
+*.user
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+
+# MSBuild
+*.projitems
+*.proj.user
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# ReSharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# Test results
+TestResults/
+*.trx
+
+# Logs
+*.log
+
+# Backup & temp files
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*.~*
+
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Publish output
+publish/
+
+# App secrets
+secrets.json
+appsettings.Development.json
+
+# Databases / cache
+*.db
+*.db-shm
+*.db-wal
+*.cache

@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
-using Tekla.Structures.Drawing.Tools;
 using TS = Tekla.Structures;
 using TSM = Tekla.Structures.Model;
 using TSG = Tekla.Structures.Geometry3d;
@@ -29,16 +28,6 @@ namespace HFT_DrawingHelper {
 
         #region Button Clicks
 
-        private void AddSectionsButton_Click(object sender, RoutedEventArgs e) {
-            AddSections();
-        }
-
-        private void AddDimensionsButton_Click(object sender, RoutedEventArgs e) {
-            AddDimensions();
-        }
-
-        #endregion
-
         #region Add sections
 
         private static void AddSections() {
@@ -50,6 +39,10 @@ namespace HFT_DrawingHelper {
 
                 CreateSectionViewOnSelectedView(drawingHandler, drawing);
             }
+        }
+
+        private void AddSectionsButton_Click(object sender, RoutedEventArgs e) {
+            AddSections();
         }
 
         #endregion
@@ -66,6 +59,12 @@ namespace HFT_DrawingHelper {
             }
         }
 
+        private void AddDimensionsButton_Click(object sender, RoutedEventArgs e) {
+            AddDimensions();
+        }
+
+        #endregion
+
         #endregion
 
         #region Helpers
@@ -79,11 +78,11 @@ namespace HFT_DrawingHelper {
             if (viewEnumerator != null) {
                 viewEnumerator.SelectInstances = false;
 
-                while (viewEnumerator.MoveNext()) {
+                while (viewEnumerator.MoveNext())
                     if (viewEnumerator.Current is TSD.View view) {
                         var drawingMarkEnumerator = view.GetAllObjects(typeof(TSD.MarkBase));
 
-                        while (drawingMarkEnumerator.MoveNext()) {
+                        while (drawingMarkEnumerator.MoveNext())
                             if (drawingMarkEnumerator.Current is TSD.MarkBase mark) {
                                 var newPosition = new TSG.Point(
                                     mark.InsertionPoint.X + 10,
@@ -94,9 +93,7 @@ namespace HFT_DrawingHelper {
                                 mark.InsertionPoint = newPosition;
                                 mark.Modify();
                             }
-                        }
                     }
-                }
             }
         }
 
@@ -104,26 +101,22 @@ namespace HFT_DrawingHelper {
             var containerView = drawing.GetSheet();
             var viewEnumerator = containerView.GetViews();
 
-            if (viewEnumerator != null) {
-                while (viewEnumerator.MoveNext()) {
+            if (viewEnumerator != null)
+                while (viewEnumerator.MoveNext())
                     if (viewEnumerator.Current is TSD.View view) {
                         var dimensionEnumerator = view.GetAllObjects(typeof(TSD.StraightDimensionSet));
 
-                        while (dimensionEnumerator.MoveNext()) {
-                            if (dimensionEnumerator.Current is TSD.StraightDimensionSet dimensionSet) {
+                        while (dimensionEnumerator.MoveNext())
+                            if (dimensionEnumerator.Current is TSD.StraightDimensionSet dimensionSet)
                                 dimensionSet.Modify();
-                            }
-                        }
                     }
-                }
-            }
         }
 
         private static void ArrangeDrawingView(TSD.Drawing drawing) {
             var containerView = drawing.GetSheet();
             var viewEnumerator = containerView.GetViews();
 
-            if (viewEnumerator != null) {
+            if (viewEnumerator != null)
                 while (viewEnumerator.MoveNext()) {
                     var view = viewEnumerator.Current as TSD.View;
 
@@ -134,7 +127,6 @@ namespace HFT_DrawingHelper {
 
                     view?.Modify();
                 }
-            }
         }
 
         #endregion
@@ -189,14 +181,22 @@ namespace HFT_DrawingHelper {
                 var viewPlane = new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem);
                 SetCurrentTransformationPlane(viewPlane);
 
-                DrawEdgesOnDrawingAsRedLines(selectedView, edgesInPlatePlane);
+                var edgesInViewPlane = TransformEdgesBetweenCoordinateSystems(
+                    contourPlate.GetCoordinateSystem(),
+                    selectedView.DisplayCoordinateSystem,
+                    edgesInPlatePlane
+                );
+
+                var rotatedEdgesInViewPlane = RotateEdgesAroundCenter2D(edgesInViewPlane, 90.0);
+
+                DrawEdgesOnDrawingAsRedLines(selectedView, rotatedEdgesInViewPlane);
                 drawing.CommitChanges();
             }
             finally {
                 SetCurrentTransformationPlane(savePlane);
             }
         }
-        
+
         private static void CreateSingleSectionView(TSD.View baseView) {
             var (viewAttrs, markAttrs) = GetSectionAttributes();
 
@@ -267,12 +267,10 @@ namespace HFT_DrawingHelper {
                     modelParts.Add(modelPart);
 
                     var partTypeName = modelPart.GetType().Name;
-                    if (partTypeCounters.ContainsKey(partTypeName)) {
+                    if (partTypeCounters.ContainsKey(partTypeName))
                         partTypeCounters[partTypeName] += 1;
-                    }
-                    else {
+                    else
                         partTypeCounters.Add(partTypeName, 1);
-                    }
                 }
                 catch {
                     // ignored
@@ -307,8 +305,9 @@ namespace HFT_DrawingHelper {
 
             return (view, mark);
         }
-        
-        private static List<(TSG.Point A, TSG.Point B)> GetContourPlateEdgesInPlatePlane(TSM.ContourPlate contourPlate) {
+
+        private static List<(TSG.Point A, TSG.Point B)>
+            GetContourPlateEdgesInPlatePlane(TSM.ContourPlate contourPlate) {
             var edges = new List<(TSG.Point A, TSG.Point B)>();
             if (contourPlate == null) return edges;
 
@@ -317,6 +316,8 @@ namespace HFT_DrawingHelper {
 
             var points = new List<TSG.Point>();
 
+            var toContourPlateLocal = TSG.MatrixFactory.ToCoordinateSystem(contourPlate.GetCoordinateSystem());
+
             var enumerator = solid.GetAllIntersectionPoints(
                 new TSG.Point(0, 0, 0),
                 new TSG.Point(1, 0, 0),
@@ -324,10 +325,10 @@ namespace HFT_DrawingHelper {
             );
 
             while (enumerator.MoveNext()) {
-                if (enumerator.Current is TSG.Point p) {
-                    // jesteśmy w płaszczyźnie blachy (workplane = CS blachy), więc Z ~ 0
-                    points.Add(new TSG.Point(p.X, p.Y, 0));
-                }
+                if (!(enumerator.Current is TSG.Point p)) continue;
+
+                var localPoint = toContourPlateLocal.Transform(p);
+                points.Add(new TSG.Point(localPoint.X, localPoint.Y, 0));
             }
 
             points = RemoveNearDuplicates(points, 0.5);
@@ -348,7 +349,7 @@ namespace HFT_DrawingHelper {
             var model = new TSM.Model();
             return model.GetWorkPlaneHandler().GetCurrentTransformationPlane();
         }
-        
+
         #endregion
 
         #region Other
@@ -356,9 +357,9 @@ namespace HFT_DrawingHelper {
         private static TSM.ContourPlate FindFirstContourPlate(List<TSM.Part> modelParts) {
             if (modelParts == null || modelParts.Count == 0) return null;
 
-            foreach (var modelPart in modelParts) {
-                if (modelPart is TSM.ContourPlate contourPlate) return contourPlate;
-            }
+            foreach (var modelPart in modelParts)
+                if (modelPart is TSM.ContourPlate contourPlate)
+                    return contourPlate;
 
             return null;
         }
@@ -376,6 +377,7 @@ namespace HFT_DrawingHelper {
                 var exists = result.Any(r => Math.Abs(r.X - p.X) <= epsilon && Math.Abs(r.Y - p.Y) <= epsilon);
                 if (!exists) result.Add(p);
             }
+
             return result;
         }
 
@@ -405,6 +407,106 @@ namespace HFT_DrawingHelper {
                 var line = new TSD.Line(view, e.A, e.B, attrs);
                 line.Insert();
             }
+        }
+
+        private static List<(TSG.Point A, TSG.Point B)> TransformEdgesBetweenCoordinateSystems(
+            TSG.CoordinateSystem contourPlateCoordinateSystemModel,
+            TSG.CoordinateSystem viewDisplayCoordinateSystemDrawing,
+            List<(TSG.Point A, TSG.Point B)> edgesInContourPlatePlane
+        ) {
+            if (edgesInContourPlatePlane == null || edgesInContourPlatePlane.Count == 0)
+                return new List<(TSG.Point A, TSG.Point B)>();
+
+            var fromContourPlateToGlobal = TSG.MatrixFactory.FromCoordinateSystem(contourPlateCoordinateSystemModel);
+            var fromGlobalToView = TSG.MatrixFactory.ToCoordinateSystem(viewDisplayCoordinateSystemDrawing);
+
+            var transformedEdges = new List<(TSG.Point A, TSG.Point B)>(edgesInContourPlatePlane.Count);
+
+            foreach (var edge in edgesInContourPlatePlane) {
+                var startPointInView = TransformPointBetweenCoordinateSystems(
+                    fromContourPlateToGlobal,
+                    fromGlobalToView,
+                    edge.A
+                );
+
+                var endPointInView = TransformPointBetweenCoordinateSystems(
+                    fromContourPlateToGlobal,
+                    fromGlobalToView,
+                    edge.B
+                );
+
+                startPointInView.Z = 0;
+                endPointInView.Z = 0;
+
+                transformedEdges.Add((startPointInView, endPointInView));
+            }
+
+            return transformedEdges;
+        }
+
+        private static TSG.Point TransformPointBetweenCoordinateSystems(
+            TSG.Matrix fromSourceToGlobal,
+            TSG.Matrix fromGlobalToTarget,
+            TSG.Point pointInSource
+        ) {
+            var pointInGlobal = fromSourceToGlobal.Transform(pointInSource);
+            var pointInTarget = fromGlobalToTarget.Transform(pointInGlobal);
+            return new TSG.Point(pointInTarget.X, pointInTarget.Y, pointInTarget.Z);
+        }
+
+        private static List<(TSG.Point A, TSG.Point B)> RotateEdgesAroundCenter2D(
+            List<(TSG.Point A, TSG.Point B)> edges,
+            double angleDegrees
+        ) {
+            if (edges == null || edges.Count == 0)
+                return new List<(TSG.Point A, TSG.Point B)>();
+
+            var rotationCenter = ComputeEdgesCenter2D(edges);
+
+            var angleRadians = angleDegrees * Math.PI / 180.0;
+            var cosineValue = Math.Cos(angleRadians);
+            var sineValue = Math.Sin(angleRadians);
+
+            var rotatedEdges = new List<(TSG.Point A, TSG.Point B)>(edges.Count);
+
+            foreach (var edge in edges)
+                rotatedEdges.Add((
+                    RotatePointAroundCenter2D(edge.A, rotationCenter, cosineValue, sineValue),
+                    RotatePointAroundCenter2D(edge.B, rotationCenter, cosineValue, sineValue)
+                ));
+
+            return rotatedEdges;
+        }
+
+        private static TSG.Point RotatePointAroundCenter2D(
+            TSG.Point point,
+            TSG.Point rotationCenter,
+            double cosineValue,
+            double sineValue
+        ) {
+            var deltaX = point.X - rotationCenter.X;
+            var deltaY = point.Y - rotationCenter.Y;
+
+            var rotatedX = rotationCenter.X + deltaX * cosineValue - deltaY * sineValue;
+            var rotatedY = rotationCenter.Y + deltaX * sineValue + deltaY * cosineValue;
+
+            return new TSG.Point(rotatedX, rotatedY, 0);
+        }
+
+        private static TSG.Point ComputeEdgesCenter2D(List<(TSG.Point A, TSG.Point B)> edges) {
+            var allPoints = new List<TSG.Point>(edges.Count * 2);
+
+            foreach (var edge in edges) {
+                allPoints.Add(edge.A);
+                allPoints.Add(edge.B);
+            }
+
+            var minX = allPoints.Min(point => point.X);
+            var maxX = allPoints.Max(point => point.X);
+            var minY = allPoints.Min(point => point.Y);
+            var maxY = allPoints.Max(point => point.Y);
+
+            return new TSG.Point((minX + maxX) * 0.5, (minY + maxY) * 0.5, 0);
         }
 
         #endregion

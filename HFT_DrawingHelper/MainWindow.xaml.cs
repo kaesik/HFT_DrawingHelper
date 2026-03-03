@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using Tekla.Structures.Drawing.Tools;
 using TS = Tekla.Structures;
 using TSM = Tekla.Structures.Model;
 using TSG = Tekla.Structures.Geometry3d;
@@ -20,6 +21,9 @@ namespace HFT_DrawingHelper {
         }
 
         #region Variables
+
+        private const string ViewAttributeName = "#HFT_Kant_Section";
+        private const string MarkAttributeName = "#HFT_SECTION_V";
 
         #endregion
 
@@ -42,7 +46,6 @@ namespace HFT_DrawingHelper {
 
             if (drawingHandler.GetConnectionStatus()) {
                 var drawing = drawingHandler.GetActiveDrawing();
-
                 if (drawing == null) return;
 
                 CreateSectionViewOnSelectedView(drawingHandler, drawing);
@@ -57,15 +60,9 @@ namespace HFT_DrawingHelper {
             var elements = ElementsToDimensionTextBox.Text;
             var drawingHandler = new TSD.DrawingHandler();
 
-
             if (drawingHandler.GetConnectionStatus()) {
                 var drawing = drawingHandler.GetActiveDrawing();
-
                 if (drawing == null) return;
-
-                ArrangeDrawingObject(drawing);
-                ArrangeDrawingDim(drawing);
-                ArrangeDrawingView(drawing);
             }
         }
 
@@ -86,7 +83,6 @@ namespace HFT_DrawingHelper {
                     if (viewEnumerator.Current is TSD.View view) {
                         var drawingMarkEnumerator = view.GetAllObjects(typeof(TSD.MarkBase));
 
-                        // Przykładowe działanie: przesunięcie o pewną odległość
                         while (drawingMarkEnumerator.MoveNext()) {
                             if (drawingMarkEnumerator.Current is TSD.MarkBase mark) {
                                 var newPosition = new TSG.Point(
@@ -131,7 +127,6 @@ namespace HFT_DrawingHelper {
                 while (viewEnumerator.MoveNext()) {
                     var view = viewEnumerator.Current as TSD.View;
 
-                    // Przykładowe działanie: przesunięcie widoku o pewną odległość
                     if (view != null) {
                         var newOrigin = new TSG.Point(view.Origin.X + 50, view.Origin.Y + 50, view.Origin.Z);
                         view.Origin = newOrigin;
@@ -160,8 +155,7 @@ namespace HFT_DrawingHelper {
             selected.SelectInstances = false;
             while (selected.MoveNext()) {
                 selectedView = selected.Current as TSD.View;
-                if (selectedView != null)
-                    break;
+                if (selectedView != null) break;
             }
 
             if (selectedView == null) {
@@ -169,20 +163,40 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
-            // CreateSingleSectionView(selectedView);
-            var modelParts = GetModelPartsFromDrawingView(selectedView);
+            var savePlane = GetCurrentTransformationPlane();
 
-            var contourPlate = FindFirstContourPlate(modelParts);
-            if (contourPlate == null) {
-                MessageBox.Show("Nie znaleziono ContourPlate na tym widoku.");
-                return;
+            try {
+                var modelParts = GetModelPartsFromDrawingView(selectedView);
+
+                var contourPlate = FindFirstContourPlate(modelParts);
+                if (contourPlate == null) {
+                    MessageBox.Show("Nie znaleziono ContourPlate na tym widoku.");
+                    return;
+                }
+
+                // 1) POBRANIE KRAWĘDZI W PŁASZCZYŹNIE BLACHY
+                var platePlane = new TSM.TransformationPlane(contourPlate.GetCoordinateSystem());
+                SetCurrentTransformationPlane(platePlane);
+
+                var edgesInPlatePlane = GetContourPlateEdgesInPlatePlane(contourPlate);
+
+                if (edgesInPlatePlane.Count == 0) {
+                    MessageBox.Show("Nie znaleziono krawędzi (intersection points = 0) nawet w płaszczyźnie blachy.");
+                    return;
+                }
+
+                // 2) RYSOWANIE W PŁASZCZYŹNIE WIDOKU (żeby Tekla poprawnie wstawiła obiekty w view)
+                var viewPlane = new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem);
+                SetCurrentTransformationPlane(viewPlane);
+
+                DrawEdgesOnDrawingAsRedLines(selectedView, edgesInPlatePlane);
+                drawing.CommitChanges();
             }
-
-            GetContourPlateEdgePoints(contourPlate);
-
-            drawing.CommitChanges();
+            finally {
+                SetCurrentTransformationPlane(savePlane);
+            }
         }
-
+        
         private static void CreateSingleSectionView(TSD.View baseView) {
             var (viewAttrs, markAttrs) = GetSectionAttributes();
 
@@ -286,58 +300,55 @@ namespace HFT_DrawingHelper {
             return modelParts;
         }
 
-        private static void GetContourPlateEdgePoints(TSM.ContourPlate contourPlate) {
-            if (contourPlate == null) {
-                MessageBox.Show("ContourPlate jest null.");
-                return;
-            }
-
-            if (contourPlate.Contour?.ContourPoints == null) {
-                MessageBox.Show("ContourPlate nie ma konturu lub punktów konturu.");
-                return;
-            }
-
-            var contourPoints = contourPlate.Contour.ContourPoints;
-            if (contourPoints.Count < 2) {
-                MessageBox.Show("Za mało punktów konturu, aby utworzyć krawędzie.");
-                return;
-            }
-
-            var outputLines = new List<string> {
-                "Punkty krawędzi ContourPlate (kolejne punkty konturu):",
-                ""
-            };
-
-            for (var index = 0; index < contourPoints.Count; index++) {
-                var firstContourPointObject = contourPoints[index] as TSM.ContourPoint;
-                var secondContourPointObject = contourPoints[(index + 1) % contourPoints.Count] as TSM.ContourPoint;
-
-                if (firstContourPointObject == null || secondContourPointObject == null) continue;
-
-                var firstPoint = new TSG.Point(firstContourPointObject.X, firstContourPointObject.Y,
-                    firstContourPointObject.Z);
-                var secondPoint = new TSG.Point(secondContourPointObject.X, secondContourPointObject.Y,
-                    secondContourPointObject.Z);
-
-                outputLines.Add(
-                    "Krawędź " + (index + 1) + ": " +
-                    "(" + firstPoint.X + ", " + firstPoint.Y + ", " + firstPoint.Z + ")" +
-                    " -> " +
-                    "(" + secondPoint.X + ", " + secondPoint.Y + ", " + secondPoint.Z + ")"
-                );
-            }
-
-            MessageBox.Show(string.Join("\n", outputLines));
-        }
-
         private static (TSD.View.ViewAttributes, TSD.SectionMarkBase.SectionMarkAttributes) GetSectionAttributes() {
-            var view = new TSD.View.ViewAttributes("#HFT_Kant_Section");
+            var view = new TSD.View.ViewAttributes(ViewAttributeName);
             var mark = new TSD.SectionMarkBase.SectionMarkAttributes();
-            mark.LoadAttributes("#HFT_SECTION_V");
+            mark.LoadAttributes(MarkAttributeName);
 
             return (view, mark);
         }
+        
+        private static List<(TSG.Point A, TSG.Point B)> GetContourPlateEdgesInPlatePlane(TSM.ContourPlate contourPlate) {
+            var edges = new List<(TSG.Point A, TSG.Point B)>();
+            if (contourPlate == null) return edges;
 
+            var solid = contourPlate.GetSolid();
+            if (solid == null) return edges;
+
+            var points = new List<TSG.Point>();
+
+            var enumerator = solid.GetAllIntersectionPoints(
+                new TSG.Point(0, 0, 0),
+                new TSG.Point(1, 0, 0),
+                new TSG.Point(0, 1, 0)
+            );
+
+            while (enumerator.MoveNext()) {
+                if (enumerator.Current is TSG.Point p) {
+                    // jesteśmy w płaszczyźnie blachy (workplane = CS blachy), więc Z ~ 0
+                    points.Add(new TSG.Point(p.X, p.Y, 0));
+                }
+            }
+
+            points = RemoveNearDuplicates(points, 0.5);
+            points = SortByAngle(points);
+
+            if (points.Count < 3) return edges;
+
+            for (var i = 0; i < points.Count; i++) {
+                var a = points[i];
+                var b = points[(i + 1) % points.Count];
+                edges.Add((a, b));
+            }
+
+            return edges;
+        }
+
+        private static TSM.TransformationPlane GetCurrentTransformationPlane() {
+            var model = new TSM.Model();
+            return model.GetWorkPlaneHandler().GetCurrentTransformationPlane();
+        }
+        
         #endregion
 
         #region Other
@@ -350,6 +361,50 @@ namespace HFT_DrawingHelper {
             }
 
             return null;
+        }
+
+        private static void SetCurrentTransformationPlane(TSM.TransformationPlane newTransformationPlane) {
+            var model = new TSM.Model();
+            model.GetWorkPlaneHandler().SetCurrentTransformationPlane(newTransformationPlane);
+        }
+
+        private static List<TSG.Point> RemoveNearDuplicates(List<TSG.Point> points, double epsilon) {
+            if (points == null || points.Count == 0) return new List<TSG.Point>();
+
+            var result = new List<TSG.Point>();
+            foreach (var p in points) {
+                var exists = result.Any(r => Math.Abs(r.X - p.X) <= epsilon && Math.Abs(r.Y - p.Y) <= epsilon);
+                if (!exists) result.Add(p);
+            }
+            return result;
+        }
+
+        private static List<TSG.Point> SortByAngle(List<TSG.Point> points) {
+            if (points == null || points.Count < 3) return points ?? new List<TSG.Point>();
+
+            var cx = points.Average(p => p.X);
+            var cy = points.Average(p => p.Y);
+
+            return points
+                .OrderBy(p => Math.Atan2(p.Y - cy, p.X - cx))
+                .ToList();
+        }
+
+        private static void DrawEdgesOnDrawingAsRedLines(
+            TSD.View view,
+            List<(TSG.Point A, TSG.Point B)> edges
+        ) {
+            if (view == null) return;
+            if (edges == null || edges.Count == 0) return;
+
+            var attrs = new TSD.Line.LineAttributes();
+            attrs.Line = new TSD.LineTypeAttributes(TSD.LineTypes.SolidLine, TSD.DrawingColors.Red);
+
+            for (var i = 0; i < edges.Count; i++) {
+                var e = edges[i];
+                var line = new TSD.Line(view, e.A, e.B, attrs);
+                line.Insert();
+            }
         }
 
         #endregion

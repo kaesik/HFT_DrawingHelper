@@ -2,14 +2,10 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
-using System.IO;
-using System.Collections;
-
+using TS = Tekla.Structures;
 using TSM = Tekla.Structures.Model;
 using TSG = Tekla.Structures.Geometry3d;
-using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
-using TSMO = Tekla.Structures.Model.Operations;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
@@ -25,16 +21,14 @@ namespace HFT_DrawingHelper {
 
         #region Variables
 
-        
-
         #endregion
 
         #region Button Clicks
-        
+
         private void AddSectionsButton_Click(object sender, RoutedEventArgs e) {
             AddSections();
         }
-        
+
         private void AddDimensionsButton_Click(object sender, RoutedEventArgs e) {
             AddDimensions();
         }
@@ -48,33 +42,33 @@ namespace HFT_DrawingHelper {
 
             if (drawingHandler.GetConnectionStatus()) {
                 var drawing = drawingHandler.GetActiveDrawing();
-                
+
                 if (drawing == null) return;
-                
+
                 CreateSectionViewOnSelectedView(drawingHandler, drawing);
             }
         }
 
         #endregion
-        
+
         #region Add dimensions
 
         private void AddDimensions() {
             var elements = ElementsToDimensionTextBox.Text;
             var drawingHandler = new TSD.DrawingHandler();
-            
+
 
             if (drawingHandler.GetConnectionStatus()) {
                 var drawing = drawingHandler.GetActiveDrawing();
-                
+
                 if (drawing == null) return;
-                
-            ArrangeDrawingObject(drawing);
-            ArrangeDrawingDim(drawing);
-            ArrangeDrawingView(drawing);
+
+                ArrangeDrawingObject(drawing);
+                ArrangeDrawingDim(drawing);
+                ArrangeDrawingView(drawing);
             }
         }
-        
+
         #endregion
 
         #region Helpers
@@ -96,11 +90,11 @@ namespace HFT_DrawingHelper {
                         while (drawingMarkEnumerator.MoveNext()) {
                             if (drawingMarkEnumerator.Current is TSD.MarkBase mark) {
                                 var newPosition = new TSG.Point(
-                                    mark.InsertionPoint.X + 10, 
+                                    mark.InsertionPoint.X + 10,
                                     mark.InsertionPoint.Y + 10,
                                     mark.InsertionPoint.Z
-                                    ); 
-                                
+                                );
+
                                 mark.InsertionPoint = newPosition;
                                 mark.Modify();
                             }
@@ -151,7 +145,7 @@ namespace HFT_DrawingHelper {
         #endregion
 
         #region Create
-        
+
         private static void CreateSectionViewOnSelectedView(TSD.DrawingHandler drawingHandler, TSD.Drawing drawing) {
             var selector = drawingHandler.GetDrawingObjectSelector();
             var selected = selector.GetSelected();
@@ -175,14 +169,23 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
-            CreateSingleSectionView(selectedView);
+            // CreateSingleSectionView(selectedView);
+            var modelParts = GetModelPartsFromDrawingView(selectedView);
+
+            var contourPlate = FindFirstContourPlate(modelParts);
+            if (contourPlate == null) {
+                MessageBox.Show("Nie znaleziono ContourPlate na tym widoku.");
+                return;
+            }
+
+            GetContourPlateEdgePoints(contourPlate);
 
             drawing.CommitChanges();
         }
 
         private static void CreateSingleSectionView(TSD.View baseView) {
             var (viewAttrs, markAttrs) = GetSectionAttributes();
-            
+
             var startPoint = new TSG.Point(baseView.Origin.X + 100, baseView.Origin.Y + 100, baseView.Origin.Z);
             var endPoint = new TSG.Point(baseView.Origin.X + 100, baseView.Origin.Y + 200, baseView.Origin.Z);
             var insertionPoint = new TSG.Point(baseView.Origin.X, baseView.Origin.Y, baseView.Origin.Z);
@@ -210,31 +213,123 @@ namespace HFT_DrawingHelper {
         }
 
         #endregion
-        
-        private static List<TSG.Point> GetContourPointsInViewPlane(TSM.ContourPlate contourPlate, TSD.View view) {
-            var contourPointsInViewPlane = new List<TSG.Point>();
-            var contourPoints = contourPlate.Contour.ContourPoints;
 
-            foreach (var point in contourPoints) {
-                var contourPoint = point as TSM.ContourPoint;
-                if (contourPoint == null) continue;
+        #region Gets
 
-                switch (view.ViewType) {
-                    case TSD.View.ViewTypes.FrontView:
-                        contourPointsInViewPlane.Add(new TSG.Point(contourPoint.X, contourPoint.Y, 0));
-                        break;
-                    case TSD.View.ViewTypes.TopView:
-                        contourPointsInViewPlane.Add(new TSG.Point(contourPoint.X, contourPoint.Z, 0));
-                        break;
-                    default:
-                        contourPointsInViewPlane.Add(new TSG.Point(contourPoint.Y, contourPoint.Z, 0));
-                        break;
+        private static List<TSM.Part> GetModelPartsFromDrawingView(TSD.View drawingView) {
+            var modelParts = new List<TSM.Part>();
+            var addedModelIdentifiers = new HashSet<string>();
+            var partTypeCounters = new Dictionary<string, int>();
+
+            var model = new TSM.Model();
+
+            var drawingObjectEnumerator = drawingView.GetAllObjects();
+            if (drawingObjectEnumerator == null) return modelParts;
+
+            drawingObjectEnumerator.SelectInstances = true;
+
+            while (drawingObjectEnumerator.MoveNext()) {
+                if (!(drawingObjectEnumerator.Current is TSD.DrawingObject drawingObject)) continue;
+
+                object modelIdentifierObject;
+
+                try {
+                    modelIdentifierObject = ((dynamic)drawingObject).ModelIdentifier;
+                }
+                catch {
+                    continue;
+                }
+
+                if (modelIdentifierObject == null) continue;
+
+                var identifierString = modelIdentifierObject.ToString();
+                if (addedModelIdentifiers.Contains(identifierString)) continue;
+
+                try {
+                    var modelObject = model.SelectModelObject((TS.Identifier)modelIdentifierObject);
+                    if (!(modelObject is TSM.Part modelPart)) continue;
+
+                    addedModelIdentifiers.Add(identifierString);
+                    modelParts.Add(modelPart);
+
+                    var partTypeName = modelPart.GetType().Name;
+                    if (partTypeCounters.ContainsKey(partTypeName)) {
+                        partTypeCounters[partTypeName] += 1;
+                    }
+                    else {
+                        partTypeCounters.Add(partTypeName, 1);
+                    }
+                }
+                catch {
+                    // ignored
                 }
             }
 
-            return contourPointsInViewPlane;
+            switch (modelParts.Count) {
+                case 0:
+                    MessageBox.Show("Znaleziono: 0 elementów typu Part na tym widoku.");
+                    return modelParts;
+                case 1: {
+                    var singlePartTypeName = modelParts[0].GetType().Name;
+                    MessageBox.Show("Znaleziono: 1 element typu " + singlePartTypeName + ".");
+                    return modelParts;
+                }
+            }
+
+            var summaryLines = partTypeCounters
+                .OrderByDescending(pair => pair.Value)
+                .Select(pair => pair.Key + " (" + pair.Value + ")")
+                .ToList();
+
+            MessageBox.Show("Znaleziono: " + modelParts.Count + " elementów typów:\n" +
+                            string.Join("\n", summaryLines));
+            return modelParts;
         }
-        
+
+        private static void GetContourPlateEdgePoints(TSM.ContourPlate contourPlate) {
+            if (contourPlate == null) {
+                MessageBox.Show("ContourPlate jest null.");
+                return;
+            }
+
+            if (contourPlate.Contour?.ContourPoints == null) {
+                MessageBox.Show("ContourPlate nie ma konturu lub punktów konturu.");
+                return;
+            }
+
+            var contourPoints = contourPlate.Contour.ContourPoints;
+            if (contourPoints.Count < 2) {
+                MessageBox.Show("Za mało punktów konturu, aby utworzyć krawędzie.");
+                return;
+            }
+
+            var outputLines = new List<string> {
+                "Punkty krawędzi ContourPlate (kolejne punkty konturu):",
+                ""
+            };
+
+            for (var index = 0; index < contourPoints.Count; index++) {
+                var firstContourPointObject = contourPoints[index] as TSM.ContourPoint;
+                var secondContourPointObject = contourPoints[(index + 1) % contourPoints.Count] as TSM.ContourPoint;
+
+                if (firstContourPointObject == null || secondContourPointObject == null) continue;
+
+                var firstPoint = new TSG.Point(firstContourPointObject.X, firstContourPointObject.Y,
+                    firstContourPointObject.Z);
+                var secondPoint = new TSG.Point(secondContourPointObject.X, secondContourPointObject.Y,
+                    secondContourPointObject.Z);
+
+                outputLines.Add(
+                    "Krawędź " + (index + 1) + ": " +
+                    "(" + firstPoint.X + ", " + firstPoint.Y + ", " + firstPoint.Z + ")" +
+                    " -> " +
+                    "(" + secondPoint.X + ", " + secondPoint.Y + ", " + secondPoint.Z + ")"
+                );
+            }
+
+            MessageBox.Show(string.Join("\n", outputLines));
+        }
+
         private static (TSD.View.ViewAttributes, TSD.SectionMarkBase.SectionMarkAttributes) GetSectionAttributes() {
             var view = new TSD.View.ViewAttributes("#HFT_Kant_Section");
             var mark = new TSD.SectionMarkBase.SectionMarkAttributes();
@@ -242,6 +337,22 @@ namespace HFT_DrawingHelper {
 
             return (view, mark);
         }
+
+        #endregion
+
+        #region Other
+
+        private static TSM.ContourPlate FindFirstContourPlate(List<TSM.Part> modelParts) {
+            if (modelParts == null || modelParts.Count == 0) return null;
+
+            foreach (var modelPart in modelParts) {
+                if (modelPart is TSM.ContourPlate contourPlate) return contourPlate;
+            }
+
+            return null;
+        }
+
+        #endregion
 
         #endregion
     }

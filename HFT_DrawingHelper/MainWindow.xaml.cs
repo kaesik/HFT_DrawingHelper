@@ -28,40 +28,64 @@ namespace HFT_DrawingHelper {
 
         #region Button Clicks
 
-        #region Add sections
+        #region Draw Edges
 
-        private static void AddSections() {
+        private static void DrawEdgesWithNumbers() {
             var drawingHandler = new TSD.DrawingHandler();
             if (!drawingHandler.GetConnectionStatus()) return;
 
             var drawing = drawingHandler.GetActiveDrawing();
             if (drawing == null) return;
 
-            var selector = drawingHandler.GetDrawingObjectSelector();
-            var selected = selector.GetSelected();
-
-            if (selected == null) {
-                MessageBox.Show("Nie zaznaczono żadnego obiektu.");
-                return;
-            }
-
-            TSD.View selectedView = null;
-
-            selected.SelectInstances = false;
-            while (selected.MoveNext()) {
-                selectedView = selected.Current as TSD.View;
-                if (selectedView != null) break;
-            }
-
-            if (selectedView == null) {
-                MessageBox.Show("Zaznacz widok na rysunku, a potem uruchom funkcję.");
-                return;
-            }
+            var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
+            if (selectedView == null) return;
 
             var edges = GetContourPlateEdges(selectedView);
             if (edges == null || edges.Count == 0) return;
 
             DrawContourPlateEdges(selectedView, edges);
+
+            drawing.CommitChanges();
+        }
+
+        private void DrawEdgesButton_Click(object sender, RoutedEventArgs e) {
+            DrawEdgesWithNumbers();
+        }
+
+        #endregion
+
+        #region Add sections
+
+        private static void AddSections(string edgeNumbersInput) {
+            var drawingHandler = new TSD.DrawingHandler();
+            if (!drawingHandler.GetConnectionStatus()) return;
+
+            var drawing = drawingHandler.GetActiveDrawing();
+            if (drawing == null) return;
+
+            var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
+            if (selectedView == null) return;
+
+            var edges = GetContourPlateEdges(selectedView);
+            if (edges == null || edges.Count == 0) return;
+
+            var requested = ParseEdgeNumbers(edgeNumbersInput);
+
+            if (requested.Count > 0) {
+                var filtered = edges
+                    .Where(kvp => requested.Contains(kvp.Key))
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+                if (filtered.Count == 0) {
+                    MessageBox.Show("Nie znaleziono krawędzi o podanych numerach.");
+                    return;
+                }
+
+                var missing = requested.Where(n => !edges.ContainsKey(n)).OrderBy(n => n).ToList();
+                if (missing.Count > 0) MessageBox.Show("Brak krawędzi o numerach: " + string.Join(", ", missing));
+
+                edges = filtered;
+            }
 
             CreateSectionViewsFromEdges(selectedView, edges);
 
@@ -69,7 +93,7 @@ namespace HFT_DrawingHelper {
         }
 
         private void AddSectionsButton_Click(object sender, RoutedEventArgs e) {
-            AddSections();
+            AddSections(EdgeNumbersTextBox.Text);
         }
 
         #endregion
@@ -398,6 +422,31 @@ namespace HFT_DrawingHelper {
             return edges;
         }
 
+        private static TSD.View GetSelectedViewOrShowMessage(TSD.DrawingHandler drawingHandler) {
+            var selector = drawingHandler.GetDrawingObjectSelector();
+            var selected = selector.GetSelected();
+
+            if (selected == null) {
+                MessageBox.Show("Nie zaznaczono żadnego obiektu.");
+                return null;
+            }
+
+            TSD.View selectedView = null;
+
+            selected.SelectInstances = false;
+            while (selected.MoveNext()) {
+                selectedView = selected.Current as TSD.View;
+                if (selectedView != null) break;
+            }
+
+            if (selectedView == null) {
+                MessageBox.Show("Zaznacz widok na rysunku, a potem uruchom funkcję.");
+                return null;
+            }
+
+            return selectedView;
+        }
+
         private static List<TSM.Part> GetModelPartsFromDrawingView(TSD.View drawingView) {
             var modelParts = new List<TSM.Part>();
             var addedModelIdentifiers = new HashSet<string>();
@@ -477,6 +526,39 @@ namespace HFT_DrawingHelper {
         #endregion
 
         #region Other
+
+        private static HashSet<int> ParseEdgeNumbers(string input) {
+            var result = new HashSet<int>();
+            if (string.IsNullOrWhiteSpace(input)) return result;
+
+            var tokens = input
+                .Replace(";", ",")
+                .Replace(" ", ",")
+                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t.Trim())
+                .Where(t => t.Length > 0);
+
+            foreach (var token in tokens)
+                if (token.Contains("-")) {
+                    var parts = token.Split(new[] { '-' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(p => p.Trim())
+                        .ToArray();
+
+                    if (parts.Length != 2) continue;
+
+                    if (!int.TryParse(parts[0], out var start)) continue;
+                    if (!int.TryParse(parts[1], out var end)) continue;
+
+                    if (start > end) (start, end) = (end, start);
+
+                    for (var i = start; i <= end; i++) result.Add(i);
+                }
+                else {
+                    if (int.TryParse(token, out var n)) result.Add(n);
+                }
+
+            return result;
+        }
 
         private static void DrawContourPlateEdges(
             TSD.View view,

@@ -40,12 +40,21 @@ namespace HFT_DrawingHelper {
             var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
             if (selectedView == null) return;
 
-            var edges = GetContourPlateEdges(selectedView);
-            if (edges == null || edges.Count == 0) return;
+            var edges = GetContourPlateEdges(selectedView, true);
+            if (edges != null && edges.Count > 0) {
+                DrawEdges(selectedView, edges);
+                drawing.CommitChanges();
+                return;
+            }
 
-            DrawContourPlateEdges(selectedView, edges);
+            edges = GetLoftedPlateEdges(selectedView, true);
+            if (edges != null && edges.Count > 0) {
+                DrawEdges(selectedView, edges);
+                drawing.CommitChanges();
+                return;
+            }
 
-            drawing.CommitChanges();
+            MessageBox.Show("Nie znaleziono ani ContourPlate ani LoftedPlate na tym widoku.");
         }
 
         private void DrawEdgesButton_Click(object sender, RoutedEventArgs e) {
@@ -66,30 +75,51 @@ namespace HFT_DrawingHelper {
             var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
             if (selectedView == null) return;
 
-            var edges = GetContourPlateEdges(selectedView);
-            if (edges == null || edges.Count == 0) return;
+            var requestedGroupNumbers = ParseEdgeNumbers(edgeNumbersInput);
 
-            var requested = ParseEdgeNumbers(edgeNumbersInput);
+            const double joinToleranceMillimeters = 0.5;
+            const double nearStraightAngleDegrees = 170.0;
 
-            if (requested.Count > 0) {
-                var filtered = edges
-                    .Where(kvp => requested.Contains(kvp.Key))
-                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            var contourEdgesBySegmentNumber = GetContourPlateEdges(selectedView, false);
+            if (contourEdgesBySegmentNumber != null && contourEdgesBySegmentNumber.Count > 0) {
+                var contourGroupsByGroupNumber = BuildNumberedEdgeGroups(
+                    contourEdgesBySegmentNumber,
+                    joinToleranceMillimeters,
+                    nearStraightAngleDegrees
+                );
 
-                if (filtered.Count == 0) {
-                    MessageBox.Show("Nie znaleziono krawędzi o podanych numerach.");
-                    return;
-                }
+                var contourSectionEdgesByGroupNumber = contourGroupsByGroupNumber
+                    .Where(pair => pair.Value != null && pair.Value.SectionEdge != null)
+                    .ToDictionary(pair => pair.Key, pair => pair.Value.SectionEdge);
 
-                var missing = requested.Where(n => !edges.ContainsKey(n)).OrderBy(n => n).ToList();
-                if (missing.Count > 0) MessageBox.Show("Brak krawędzi o numerach: " + string.Join(", ", missing));
+                var filteredSectionEdges =
+                    FilterEdgesOrShowMessage(contourSectionEdgesByGroupNumber, requestedGroupNumbers);
+                if (filteredSectionEdges == null) return;
 
-                edges = filtered;
+                CreateSectionViewsFromEdges(selectedView, filteredSectionEdges);
+                drawing.CommitChanges();
+                return;
             }
 
-            CreateSectionViewsFromEdges(selectedView, edges);
+            var loftedEdgesBySegmentNumber = GetLoftedPlateEdges(selectedView, false);
+            if (loftedEdgesBySegmentNumber != null && loftedEdgesBySegmentNumber.Count > 0) {
+                var loftedGroupsByGroupNumber = BuildNumberedEdgeGroups(
+                    loftedEdgesBySegmentNumber,
+                    joinToleranceMillimeters,
+                    nearStraightAngleDegrees
+                );
 
-            drawing.CommitChanges();
+                var loftedSectionEdgesByGroupNumber = loftedGroupsByGroupNumber
+                    .Where(pair => pair.Value?.SectionEdge != null)
+                    .ToDictionary(pair => pair.Key, pair => pair.Value.SectionEdge);
+
+                var filteredSectionEdges =
+                    FilterEdgesOrShowMessage(loftedSectionEdgesByGroupNumber, requestedGroupNumbers);
+                if (filteredSectionEdges == null) return;
+
+                CreateSectionViewsFromEdges(selectedView, filteredSectionEdges);
+                drawing.CommitChanges();
+            }
         }
 
         private void AddSectionsButton_Click(object sender, RoutedEventArgs e) {
@@ -193,15 +223,13 @@ namespace HFT_DrawingHelper {
 
             var (viewAttrs, markAttrs) = GetSectionAttributes();
 
-            const double depthUp = 100.0;
-            const double depthDown = 100.0;
+            const double depthUp = 1.0;
+            const double depthDown = 1.0;
             const double sectionLineLengthMm = 300.0;
             const double gap = 10.0;
 
-            // bounding box głównego widoku
             var baseBox = baseView.GetAxisAlignedBoundingBox();
 
-            // start odkładania przekrojów – prawa krawędź głównego widoku
             var cursorX = baseBox.UpperRight.X + gap;
             var cursorY = baseBox.UpperRight.Y;
 
@@ -227,7 +255,7 @@ namespace HFT_DrawingHelper {
                 var nx = -dy / len;
                 var ny = dx / len;
 
-                var half = sectionLineLengthMm * 0.5;
+                const double half = sectionLineLengthMm * 0.5;
 
                 var startPoint = new TSG.Point(
                     mid.X - nx * half,
@@ -240,6 +268,8 @@ namespace HFT_DrawingHelper {
                     mid.Y + ny * half,
                     mid.Z
                 );
+
+                ForceSectionLookLeftOrUp(ref startPoint, ref endPoint);
 
                 var insertionPoint = new TSG.Point(cursorX, cursorY, baseView.Origin.Z);
 
@@ -261,10 +291,8 @@ namespace HFT_DrawingHelper {
                 sectionView.Modify();
                 sectionMark.Modify();
 
-                // bounding box nowego przekroju
                 var secBox = sectionView.GetAxisAlignedBoundingBox();
 
-                // przesunięcie tak, aby lewa krawędź była dokładnie przy cursorX
                 var deltaX = cursorX - secBox.LowerLeft.X;
                 var deltaY = cursorY - secBox.UpperLeft.Y;
 
@@ -276,7 +304,6 @@ namespace HFT_DrawingHelper {
 
                 sectionView.Modify();
 
-                // nowy cursor dla kolejnego przekroju
                 secBox = sectionView.GetAxisAlignedBoundingBox();
                 cursorX = secBox.UpperRight.X + gap;
             }
@@ -315,7 +342,12 @@ namespace HFT_DrawingHelper {
 
         #region Gets
 
-        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetContourPlateEdges(TSD.View selectedView) {
+        #region ContourPlate
+
+        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetContourPlateEdges(
+            TSD.View selectedView,
+            bool showMessages
+        ) {
             var edgesByNumber = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
             if (selectedView == null) return edgesByNumber;
 
@@ -326,25 +358,25 @@ namespace HFT_DrawingHelper {
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
 
             try {
-                var modelParts = GetModelPartsFromDrawingView(selectedView);
+                var modelParts = GetModelPartsFromDrawingView(selectedView, showMessages);
 
                 var contourPlate = FindFirstContourPlate(modelParts);
                 if (contourPlate == null) {
-                    MessageBox.Show("Nie znaleziono ContourPlate na tym widoku.");
+                    if (showMessages) MessageBox.Show("Nie znaleziono ContourPlate na tym widoku.");
                     return edgesByNumber;
                 }
 
-                // 1) Pobierz krawędzie w płaszczyźnie blachy
                 workPlaneHandler.SetCurrentTransformationPlane(
                     new TSM.TransformationPlane(contourPlate.GetCoordinateSystem()));
+
                 var edgesInPlatePlane = GetContourPlateEdgesInPlane(contourPlate);
 
                 if (edgesInPlatePlane == null || edgesInPlatePlane.Count == 0) {
-                    MessageBox.Show("Nie znaleziono krawędzi (intersection points = 0) nawet w płaszczyźnie blachy.");
+                    if (showMessages)
+                        MessageBox.Show("Nie znaleziono krawędzi w płaszczyźnie ContourPlate.");
                     return edgesByNumber;
                 }
 
-                // 2) Transform do płaszczyzny widoku
                 workPlaneHandler.SetCurrentTransformationPlane(
                     new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem));
 
@@ -354,11 +386,9 @@ namespace HFT_DrawingHelper {
                     edgesInPlatePlane
                 );
 
-                // 3) Obrót + przesunięcie (jak u Ciebie było)
                 var rotated = RotateEdgesAroundCenter2D(edgesInViewPlane, 90.0);
                 var shiftedDown = TranslateEdgesDownByHalfHeight(rotated);
 
-                // 4) Filtr długości + numeracja do dictionary
                 var number = 0;
 
                 for (var i = 0; i < shiftedDown.Count; i++) {
@@ -386,6 +416,7 @@ namespace HFT_DrawingHelper {
                 workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
             }
         }
+
 
         private static List<(TSG.Point A, TSG.Point B)> GetContourPlateEdgesInPlane(TSM.ContourPlate contourPlate) {
             var edges = new List<(TSG.Point A, TSG.Point B)>();
@@ -422,6 +453,118 @@ namespace HFT_DrawingHelper {
             return edges;
         }
 
+        #endregion
+
+        #region LoftedPlate
+
+        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetLoftedPlateEdges(
+            TSD.View selectedView,
+            bool showMessages
+        ) {
+            var edgesByNumber = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
+            if (selectedView == null) return edgesByNumber;
+
+            const double minLengthMm = 100.0;
+
+            var model = new TSM.Model();
+            var workPlaneHandler = model.GetWorkPlaneHandler();
+            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
+
+            try {
+                var modelParts = GetModelPartsFromDrawingView(selectedView, showMessages);
+
+                var loftedPlate = FindFirstLoftedPlate(modelParts);
+                if (loftedPlate == null) {
+                    if (showMessages) MessageBox.Show("Nie znaleziono LoftedPlate na tym widoku.");
+                    return edgesByNumber;
+                }
+
+                workPlaneHandler.SetCurrentTransformationPlane(
+                    new TSM.TransformationPlane(loftedPlate.GetCoordinateSystem()));
+
+                var edgesInPlatePlane = GetLoftedPlateEdgesInPlane(loftedPlate);
+
+                if (edgesInPlatePlane == null || edgesInPlatePlane.Count == 0) {
+                    if (showMessages)
+                        MessageBox.Show("Nie znaleziono krawędzi w płaszczyźnie LoftedPlate.");
+                    return edgesByNumber;
+                }
+
+                workPlaneHandler.SetCurrentTransformationPlane(
+                    new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem));
+
+                var edgesInViewPlane = TransformEdgesBetweenCoordinateSystems(
+                    loftedPlate.GetCoordinateSystem(),
+                    selectedView.DisplayCoordinateSystem,
+                    edgesInPlatePlane
+                );
+
+                var number = 0;
+
+                for (var i = 0; i < edgesInViewPlane.Count; i++) {
+                    var start = edgesInViewPlane[i].A;
+                    var end = edgesInViewPlane[i].B;
+
+                    var dx = end.X - start.X;
+                    var dy = end.Y - start.Y;
+                    var dz = end.Z - start.Z;
+
+                    var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                    if (length <= minLengthMm) continue;
+
+                    number++;
+
+                    var a = new TSG.Point(start.X, start.Y, 0);
+                    var b = new TSG.Point(end.X, end.Y, 0);
+
+                    edgesByNumber[number] = Tuple.Create(a, b);
+                }
+
+                return edgesByNumber;
+            }
+            finally {
+                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
+            }
+        }
+
+        private static List<(TSG.Point A, TSG.Point B)> GetLoftedPlateEdgesInPlane(TSM.LoftedPlate loftedPlate) {
+            var edges = new List<(TSG.Point A, TSG.Point B)>();
+            if (loftedPlate == null) return edges;
+
+            var solid = loftedPlate.GetSolid();
+            if (solid == null) return edges;
+
+            var points = new List<TSG.Point>();
+
+            var enumerator = solid.GetAllIntersectionPoints(
+                new TSG.Point(0, 0, 0),
+                new TSG.Point(1, 0, 0),
+                new TSG.Point(0, 1, 0)
+            );
+
+            while (enumerator.MoveNext()) {
+                if (!(enumerator.Current is TSG.Point point)) continue;
+
+                points.Add(new TSG.Point(point.X, point.Y, 0));
+            }
+
+            points = RemoveNearDuplicates(points, 0.5);
+            points = SortByAngle(points);
+
+            if (points.Count < 3) return edges;
+
+            for (var i = 0; i < points.Count; i++) {
+                var a = points[i];
+                var b = points[(i + 1) % points.Count];
+                edges.Add((a, b));
+            }
+
+            return edges;
+        }
+
+        #endregion
+
+        /// Pobiera zaznaczony widok rysunkowy. Jeśli nie ma zaznaczenia lub zaznaczenie nie jest widokiem, pokazuje komunikat i zwraca null.
         private static TSD.View GetSelectedViewOrShowMessage(TSD.DrawingHandler drawingHandler) {
             var selector = drawingHandler.GetDrawingObjectSelector();
             var selected = selector.GetSelected();
@@ -447,7 +590,8 @@ namespace HFT_DrawingHelper {
             return selectedView;
         }
 
-        private static List<TSM.Part> GetModelPartsFromDrawingView(TSD.View drawingView) {
+        /// Pobiera unikalne elementy typu Part powiązane z obiektami rysunkowymi na danym widoku.
+        private static List<TSM.Part> GetModelPartsFromDrawingView(TSD.View drawingView, bool showMessages) {
             var modelParts = new List<TSM.Part>();
             var addedModelIdentifiers = new HashSet<string>();
             var partTypeCounters = new Dictionary<string, int>();
@@ -494,15 +638,15 @@ namespace HFT_DrawingHelper {
                 }
             }
 
+            if (!showMessages) return modelParts;
+
             switch (modelParts.Count) {
                 case 0:
                     MessageBox.Show("Znaleziono: 0 elementów typu Part na tym widoku.");
                     return modelParts;
-                case 1: {
-                    var singlePartTypeName = modelParts[0].GetType().Name;
-                    MessageBox.Show("Znaleziono: 1 element typu " + singlePartTypeName + ".");
+                case 1:
+                    MessageBox.Show("Znaleziono: 1 element typu " + modelParts[0].GetType().Name + ".");
                     return modelParts;
-                }
             }
 
             var summaryLines = partTypeCounters
@@ -512,9 +656,11 @@ namespace HFT_DrawingHelper {
 
             MessageBox.Show("Znaleziono: " + modelParts.Count + " elementów typów:\n" +
                             string.Join("\n", summaryLines));
+
             return modelParts;
         }
 
+        /// Pobiera atrybuty dla widoku i marku przekroju zdefiniowane w Tekla Structures. Zakłada, że atrybuty o podanych nazwach istnieją.
         private static (TSD.View.ViewAttributes, TSD.SectionMarkBase.SectionMarkAttributes) GetSectionAttributes() {
             var view = new TSD.View.ViewAttributes(ViewAttributeName);
             var mark = new TSD.SectionMarkBase.SectionMarkAttributes();
@@ -527,91 +673,62 @@ namespace HFT_DrawingHelper {
 
         #region Other
 
-        private static HashSet<int> ParseEdgeNumbers(string input) {
-            var result = new HashSet<int>();
-            if (string.IsNullOrWhiteSpace(input)) return result;
+        #region Draw Elements
 
-            var tokens = input
-                .Replace(";", ",")
-                .Replace(" ", ",")
-                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(t => t.Trim())
-                .Where(t => t.Length > 0);
-
-            foreach (var token in tokens)
-                if (token.Contains("-")) {
-                    var parts = token.Split(new[] { '-' }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(p => p.Trim())
-                        .ToArray();
-
-                    if (parts.Length != 2) continue;
-
-                    if (!int.TryParse(parts[0], out var start)) continue;
-                    if (!int.TryParse(parts[1], out var end)) continue;
-
-                    if (start > end) (start, end) = (end, start);
-
-                    for (var i = start; i <= end; i++) result.Add(i);
-                }
-                else {
-                    if (int.TryParse(token, out var n)) result.Add(n);
-                }
-
-            return result;
-        }
-
-        private static void DrawContourPlateEdges(
-            TSD.View view,
-            Dictionary<int, Tuple<TSG.Point, TSG.Point>> edgesByNumber
-        ) {
+        /// Rysuje linie krawędzi i numery obok nich na widoku. Zakłada, że krawędzie są już w układzie współrzędnych widoku (Z=0).
+        private static void DrawEdges(TSD.View view, Dictionary<int, Tuple<TSG.Point, TSG.Point>> edgesByNumber) {
             if (view == null) return;
             if (edgesByNumber == null || edgesByNumber.Count == 0) return;
 
-            const double textOffsetMm = 10.0;
+            const double nearStraightAngleDegrees = 170.0;
+            const double joinToleranceMillimeters = 0.5;
 
-            var lineAttrs = new TSD.Line.LineAttributes {
+            const double numberOffsetMillimeters = 20.0;
+
+            var lineAttributes = new TSD.Line.LineAttributes {
                 Line = new TSD.LineTypeAttributes(TSD.LineTypes.SolidLine, TSD.DrawingColors.Red)
             };
 
-            foreach (var kvp in edgesByNumber.OrderBy(k => k.Key)) {
-                var number = kvp.Key;
-                var start = kvp.Value.Item1;
-                var end = kvp.Value.Item2;
+            var numberedGroups =
+                BuildNumberedEdgeGroups(edgesByNumber, joinToleranceMillimeters, nearStraightAngleDegrees);
 
-                // 1) Linia
-                new TSD.Line(view, start, end, lineAttrs).Insert();
+            foreach (var pair in numberedGroups.OrderBy(p => p.Key)) {
+                var group = pair.Value;
+                if (group == null) continue;
 
-                // 2) Środek
-                var mid = new TSG.Point(
-                    (start.X + end.X) * 0.5,
-                    (start.Y + end.Y) * 0.5,
-                    0
-                );
+                if (!group.IsPolyline) {
+                    var singleSegment = group.EdgeSegments[0];
 
-                // 3) Prostopadły offset w XY (żeby numer był obok linii)
-                var dx = end.X - start.X;
-                var dy = end.Y - start.Y;
+                    new TSD.Line(view, singleSegment.StartPoint, singleSegment.EndPoint, lineAttributes).Insert();
 
-                var nX = -dy;
-                var nY = dx;
-                var nLen = Math.Sqrt(nX * nX + nY * nY);
+                    var numberPoint = ComputeTextInsertionPointForSegment(
+                        singleSegment.StartPoint,
+                        singleSegment.EndPoint,
+                        numberOffsetMillimeters
+                    );
 
-                if (nLen > 1e-9) {
-                    nX /= nLen;
-                    nY /= nLen;
-
-                    mid.X += nX * textOffsetMm;
-                    mid.Y += nY * textOffsetMm;
+                    new TSD.Text(view, numberPoint, group.GroupNumber.ToString()).Insert();
+                    continue;
                 }
-                else
-                    mid.Y += textOffsetMm;
 
-                // 4) Tekst z numerem
-                var text = new TSD.Text(view, mid, number.ToString());
-                text.Insert();
+                var polylinePointList = new TSD.PointList();
+                foreach (var polylinePoint in group.PolylinePoints)
+                    polylinePointList.Add(new TSG.Point(polylinePoint.X, polylinePoint.Y, 0));
+
+                var polyline = new TSD.Polyline(view, polylinePointList);
+                polyline.Insert();
+
+                var polylineNumberPoint =
+                    ComputeTextInsertionPointForPolyline(group.PolylinePoints, numberOffsetMillimeters);
+                new TSD.Text(view, polylineNumberPoint, group.GroupNumber.ToString()).Insert();
             }
         }
 
+        #endregion
+
+        #region Find Elements
+
+        /// Szuka pierwszego elementu typu ContourPlate w liście. Jeśli nie znajdzie, zwraca null.
         private static TSM.ContourPlate FindFirstContourPlate(List<TSM.Part> parts) {
             if (parts == null || parts.Count == 0) return null;
 
@@ -622,35 +739,22 @@ namespace HFT_DrawingHelper {
             return null;
         }
 
-        private static List<(TSG.Point A, TSG.Point B)> TransformEdgesBetweenCoordinateSystems(
-            TSG.CoordinateSystem fromCs,
-            TSG.CoordinateSystem toCs,
-            List<(TSG.Point A, TSG.Point B)> edges
-        ) {
-            if (edges == null || edges.Count == 0)
-                return new List<(TSG.Point A, TSG.Point B)>();
+        /// Szuka pierwszego elementu typu LoftedPlate w liście. Jeśli nie znajdzie, zwraca null.
+        private static TSM.LoftedPlate FindFirstLoftedPlate(List<TSM.Part> parts) {
+            if (parts == null || parts.Count == 0) return null;
 
-            var fromToGlobal = TSG.MatrixFactory.FromCoordinateSystem(fromCs);
-            var globalToTo = TSG.MatrixFactory.ToCoordinateSystem(toCs);
+            foreach (var part in parts)
+                if (part is TSM.LoftedPlate loftedPlate)
+                    return loftedPlate;
 
-            var result = new List<(TSG.Point A, TSG.Point B)>(edges.Count);
-
-            for (var i = 0; i < edges.Count; i++) {
-                var aGlobal = fromToGlobal.Transform(edges[i].A);
-                var bGlobal = fromToGlobal.Transform(edges[i].B);
-
-                var aTo = globalToTo.Transform(aGlobal);
-                var bTo = globalToTo.Transform(bGlobal);
-
-                result.Add((
-                    new TSG.Point(aTo.X, aTo.Y, 0),
-                    new TSG.Point(bTo.X, bTo.Y, 0)
-                ));
-            }
-
-            return result;
+            return null;
         }
 
+        #endregion
+
+        #region Move Elemets
+
+        /// Rotuje krawędzie o zadany kąt wokół ich środka w 2D. Po rotacji normalizuje pozycję, aby minimalne X i Y były takie same jak przed rotacją.
         private static List<(TSG.Point A, TSG.Point B)> RotateEdgesAroundCenter2D(
             List<(TSG.Point A, TSG.Point B)> edges,
             double angleDegrees
@@ -716,6 +820,7 @@ namespace HFT_DrawingHelper {
             return rotated;
         }
 
+        /// Przesuwa krawędzie w dół o połowę wysokości, aby były bardziej "w środku" względem pierwotnej pozycji.
         private static List<(TSG.Point A, TSG.Point B)> TranslateEdgesDownByHalfHeight(
             List<(TSG.Point A, TSG.Point B)> edges
         ) {
@@ -745,21 +850,7 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
-        private static TSG.Point ComputeEdgesCenter2D(List<(TSG.Point A, TSG.Point B)> edges) {
-            var pts = new List<TSG.Point>(edges.Count * 2);
-            for (var i = 0; i < edges.Count; i++) {
-                pts.Add(edges[i].A);
-                pts.Add(edges[i].B);
-            }
-
-            var minX = pts.Min(p => p.X);
-            var maxX = pts.Max(p => p.X);
-            var minY = pts.Min(p => p.Y);
-            var maxY = pts.Max(p => p.Y);
-
-            return new TSG.Point((minX + maxX) * 0.5, (minY + maxY) * 0.5, 0);
-        }
-
+        /// Rotuje punkt p wokół punktu c o kąt określony przez cos i sin. Zakłada, że punkty są w 2D (Z=0) i wynik również ma Z=0.
         private static TSG.Point RotatePointAroundCenter2D(
             TSG.Point p,
             TSG.Point c,
@@ -775,6 +866,467 @@ namespace HFT_DrawingHelper {
             return new TSG.Point(rx, ry, 0);
         }
 
+        #endregion
+
+        #region Numer Edges
+
+        /// Parsuje ciąg znaków, który może zawierać pojedyncze numery (np. "3"), zakresy (np. "5-7") oraz różne separatory (przecinki, średniki, spacje).
+        /// Zwraca zbiór unikalnych numerów krawędzi.
+        private static HashSet<int> ParseEdgeNumbers(string input) {
+            var result = new HashSet<int>();
+            if (string.IsNullOrWhiteSpace(input)) return result;
+
+            var tokens = input
+                .Replace(";", ",")
+                .Replace(" ", ",")
+                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t.Trim())
+                .Where(t => t.Length > 0);
+
+            foreach (var token in tokens)
+                if (token.Contains("-")) {
+                    var parts = token.Split(new[] { '-' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(p => p.Trim())
+                        .ToArray();
+
+                    if (parts.Length != 2) continue;
+
+                    if (!int.TryParse(parts[0], out var start)) continue;
+                    if (!int.TryParse(parts[1], out var end)) continue;
+
+                    if (start > end) (start, end) = (end, start);
+
+                    for (var i = start; i <= end; i++) result.Add(i);
+                }
+                else {
+                    if (int.TryParse(token, out var n)) result.Add(n);
+                }
+
+            return result;
+        }
+
+        #endregion
+
+        private sealed class EdgeSegment {
+            public int EdgeNumber { get; set; }
+            public TSG.Point StartPoint { get; set; }
+            public TSG.Point EndPoint { get; set; }
+        }
+
+        private sealed class PolylineGroup {
+            public List<EdgeSegment> EdgeSegments { get; } = new List<EdgeSegment>();
+            public List<TSG.Point> PolylinePoints { get; } = new List<TSG.Point>();
+        }
+
+        private sealed class NumberedEdgeGroup {
+            public int GroupNumber { get; set; }
+            public bool IsPolyline { get; set; }
+            public List<EdgeSegment> EdgeSegments { get; } = new List<EdgeSegment>();
+            public List<TSG.Point> PolylinePoints { get; } = new List<TSG.Point>();
+            public Tuple<TSG.Point, TSG.Point> SectionEdge { get; set; }
+        }
+
+        private static Dictionary<int, NumberedEdgeGroup> BuildNumberedEdgeGroups(
+            Dictionary<int, Tuple<TSG.Point, TSG.Point>> edgesByNumber,
+            double joinToleranceMillimeters,
+            double nearStraightAngleDegrees
+        ) {
+            var result = new Dictionary<int, NumberedEdgeGroup>();
+            if (edgesByNumber == null || edgesByNumber.Count == 0) return result;
+
+            var orderedEdges = edgesByNumber
+                .OrderBy(edgePair => edgePair.Key)
+                .Select(edgePair => new EdgeSegment {
+                    EdgeNumber = edgePair.Key,
+                    StartPoint = new TSG.Point(edgePair.Value.Item1.X, edgePair.Value.Item1.Y, 0),
+                    EndPoint = new TSG.Point(edgePair.Value.Item2.X, edgePair.Value.Item2.Y, 0)
+                })
+                .ToList();
+
+            var orderedConnectedEdges = BuildOrderedConnectedEdges(orderedEdges, joinToleranceMillimeters);
+            var polylineGroups = SplitEdgesIntoPolylineGroupsByAngle(orderedConnectedEdges, nearStraightAngleDegrees);
+
+            var groupNumber = 0;
+
+            foreach (var polylineGroup in polylineGroups) {
+                if (polylineGroup == null) continue;
+                if (polylineGroup.EdgeSegments == null || polylineGroup.EdgeSegments.Count == 0) continue;
+
+                groupNumber++;
+
+                var numberedGroup = new NumberedEdgeGroup {
+                    GroupNumber = groupNumber,
+                    IsPolyline = polylineGroup.EdgeSegments.Count > 1
+                };
+
+                foreach (var edgeSegment in polylineGroup.EdgeSegments) numberedGroup.EdgeSegments.Add(edgeSegment);
+
+                foreach (var polylinePoint in polylineGroup.PolylinePoints)
+                    numberedGroup.PolylinePoints.Add(polylinePoint);
+
+                if (!numberedGroup.IsPolyline) {
+                    var singleSegment = numberedGroup.EdgeSegments[0];
+                    numberedGroup.SectionEdge = Tuple.Create(singleSegment.StartPoint, singleSegment.EndPoint);
+                }
+                else
+                    numberedGroup.SectionEdge = ComputeSectionEdgeForPolylineMiddle(numberedGroup.PolylinePoints);
+
+                result[numberedGroup.GroupNumber] = numberedGroup;
+            }
+
+            return result;
+        }
+
+        private static Tuple<TSG.Point, TSG.Point> ComputeSectionEdgeForPolylineMiddle(List<TSG.Point> polylinePoints) {
+            if (polylinePoints == null || polylinePoints.Count < 2)
+                return Tuple.Create(new TSG.Point(0, 0, 0), new TSG.Point(1, 0, 0));
+
+            var totalLength = 0.0;
+
+            for (var i = 0; i < polylinePoints.Count - 1; i++)
+                totalLength += ComputeDistance2D(polylinePoints[i], polylinePoints[i + 1]);
+
+            if (totalLength < 1e-9)
+                return Tuple.Create(
+                    new TSG.Point(polylinePoints[0].X, polylinePoints[0].Y, 0),
+                    new TSG.Point(polylinePoints[0].X + 1.0, polylinePoints[0].Y, 0)
+                );
+
+            var halfLength = totalLength * 0.5;
+            var walkedLength = 0.0;
+
+            for (var i = 0; i < polylinePoints.Count - 1; i++) {
+                var segmentStartPoint = polylinePoints[i];
+                var segmentEndPoint = polylinePoints[i + 1];
+
+                var segmentLength = ComputeDistance2D(segmentStartPoint, segmentEndPoint);
+                if (segmentLength < 1e-9) continue;
+
+                if (walkedLength + segmentLength >= halfLength) {
+                    var remaining = halfLength - walkedLength;
+                    var t = remaining / segmentLength;
+
+                    var middlePoint = new TSG.Point(
+                        segmentStartPoint.X + (segmentEndPoint.X - segmentStartPoint.X) * t,
+                        segmentStartPoint.Y + (segmentEndPoint.Y - segmentStartPoint.Y) * t,
+                        0
+                    );
+
+                    var directionX = segmentEndPoint.X - segmentStartPoint.X;
+                    var directionY = segmentEndPoint.Y - segmentStartPoint.Y;
+
+                    var directionLength = Math.Sqrt(directionX * directionX + directionY * directionY);
+                    if (directionLength < 1e-9)
+                        return Tuple.Create(
+                            new TSG.Point(middlePoint.X - 1.0, middlePoint.Y, 0),
+                            new TSG.Point(middlePoint.X + 1.0, middlePoint.Y, 0)
+                        );
+
+                    var unitDirectionX = directionX / directionLength;
+                    var unitDirectionY = directionY / directionLength;
+
+                    const double tangentSegmentHalfLengthMillimeters = 50.0;
+
+                    var tangentStartPoint = new TSG.Point(
+                        middlePoint.X - unitDirectionX * tangentSegmentHalfLengthMillimeters,
+                        middlePoint.Y - unitDirectionY * tangentSegmentHalfLengthMillimeters,
+                        0
+                    );
+
+                    var tangentEndPoint = new TSG.Point(
+                        middlePoint.X + unitDirectionX * tangentSegmentHalfLengthMillimeters,
+                        middlePoint.Y + unitDirectionY * tangentSegmentHalfLengthMillimeters,
+                        0
+                    );
+
+                    return Tuple.Create(tangentStartPoint, tangentEndPoint);
+                }
+
+                walkedLength += segmentLength;
+            }
+
+            var lastStartPoint = polylinePoints[polylinePoints.Count - 2];
+            var lastEndPoint = polylinePoints[polylinePoints.Count - 1];
+
+            return Tuple.Create(
+                new TSG.Point(lastStartPoint.X, lastStartPoint.Y, 0),
+                new TSG.Point(lastEndPoint.X, lastEndPoint.Y, 0)
+            );
+        }
+
+        private static List<EdgeSegment> BuildOrderedConnectedEdges(List<EdgeSegment> orderedEdges,
+            double joinToleranceMillimeters) {
+            if (orderedEdges == null || orderedEdges.Count == 0) return new List<EdgeSegment>();
+
+            var connectedEdges = new List<EdgeSegment>();
+            connectedEdges.Add(new EdgeSegment {
+                EdgeNumber = orderedEdges[0].EdgeNumber,
+                StartPoint = orderedEdges[0].StartPoint,
+                EndPoint = orderedEdges[0].EndPoint
+            });
+
+            for (var edgeIndex = 1; edgeIndex < orderedEdges.Count; edgeIndex++) {
+                var lastConnectedEdge = connectedEdges[connectedEdges.Count - 1];
+                var lastPointInChain = lastConnectedEdge.EndPoint;
+
+                var currentEdge = orderedEdges[edgeIndex];
+                var currentStartPoint = currentEdge.StartPoint;
+                var currentEndPoint = currentEdge.EndPoint;
+
+                var distanceToStartPoint = ComputeDistance2D(lastPointInChain, currentStartPoint);
+                var distanceToEndPoint = ComputeDistance2D(lastPointInChain, currentEndPoint);
+
+                if (distanceToStartPoint <= joinToleranceMillimeters) {
+                    connectedEdges.Add(new EdgeSegment {
+                        EdgeNumber = currentEdge.EdgeNumber,
+                        StartPoint = currentStartPoint,
+                        EndPoint = currentEndPoint
+                    });
+                    continue;
+                }
+
+                if (distanceToEndPoint <= joinToleranceMillimeters) {
+                    connectedEdges.Add(new EdgeSegment {
+                        EdgeNumber = currentEdge.EdgeNumber,
+                        StartPoint = currentEndPoint,
+                        EndPoint = currentStartPoint
+                    });
+                    continue;
+                }
+
+                // Fallback: wybieramy orientację z bliższym końcem (żeby zachować ciągłość wizualnie)
+                if (distanceToStartPoint <= distanceToEndPoint)
+                    connectedEdges.Add(new EdgeSegment {
+                        EdgeNumber = currentEdge.EdgeNumber,
+                        StartPoint = currentStartPoint,
+                        EndPoint = currentEndPoint
+                    });
+                else
+                    connectedEdges.Add(new EdgeSegment {
+                        EdgeNumber = currentEdge.EdgeNumber,
+                        StartPoint = currentEndPoint,
+                        EndPoint = currentStartPoint
+                    });
+            }
+
+            return connectedEdges;
+        }
+
+        private static List<PolylineGroup> SplitEdgesIntoPolylineGroupsByAngle(List<EdgeSegment> connectedEdges,
+            double nearStraightAngleDegrees) {
+            var polylineGroups = new List<PolylineGroup>();
+            if (connectedEdges == null || connectedEdges.Count == 0) return polylineGroups;
+
+            var currentGroup = new PolylineGroup();
+            currentGroup.EdgeSegments.Add(connectedEdges[0]);
+            currentGroup.PolylinePoints.Add(connectedEdges[0].StartPoint);
+            currentGroup.PolylinePoints.Add(connectedEdges[0].EndPoint);
+
+            for (var edgeIndex = 1; edgeIndex < connectedEdges.Count; edgeIndex++) {
+                var previousEdge = connectedEdges[edgeIndex - 1];
+                var currentEdge = connectedEdges[edgeIndex];
+
+                var vertexPoint = previousEdge.EndPoint;
+                var previousPoint = previousEdge.StartPoint;
+                var nextPoint = currentEdge.EndPoint;
+
+                var angleInDegrees = ComputeAngleInDegrees(previousPoint, vertexPoint, nextPoint, 1e-6);
+
+                if (angleInDegrees >= nearStraightAngleDegrees) {
+                    currentGroup.EdgeSegments.Add(currentEdge);
+                    currentGroup.PolylinePoints.Add(currentEdge.EndPoint);
+                }
+                else {
+                    polylineGroups.Add(currentGroup);
+
+                    currentGroup = new PolylineGroup();
+                    currentGroup.EdgeSegments.Add(currentEdge);
+                    currentGroup.PolylinePoints.Add(currentEdge.StartPoint);
+                    currentGroup.PolylinePoints.Add(currentEdge.EndPoint);
+                }
+            }
+
+            polylineGroups.Add(currentGroup);
+            return polylineGroups;
+        }
+
+        private static TSG.Point ComputeTextInsertionPointForSegment(TSG.Point startPoint, TSG.Point endPoint,
+            double offsetMillimeters) {
+            var midpoint = new TSG.Point(
+                (startPoint.X + endPoint.X) * 0.5,
+                (startPoint.Y + endPoint.Y) * 0.5,
+                0
+            );
+
+            var directionX = endPoint.X - startPoint.X;
+            var directionY = endPoint.Y - startPoint.Y;
+
+            var directionLength = Math.Sqrt(directionX * directionX + directionY * directionY);
+            if (directionLength < 1e-9) return new TSG.Point(midpoint.X, midpoint.Y + offsetMillimeters, 0);
+
+            var normalX = -directionY / directionLength;
+            var normalY = directionX / directionLength;
+
+            return new TSG.Point(
+                midpoint.X + normalX * offsetMillimeters,
+                midpoint.Y + normalY * offsetMillimeters,
+                0
+            );
+        }
+
+        private static TSG.Point ComputeTextInsertionPointForPolyline(List<TSG.Point> polylinePoints,
+            double offsetMillimeters) {
+            if (polylinePoints == null || polylinePoints.Count < 2) return new TSG.Point(0, 0, 0);
+
+            var sumX = 0.0;
+            var sumY = 0.0;
+
+            foreach (var polylinePoint in polylinePoints) {
+                sumX += polylinePoint.X;
+                sumY += polylinePoint.Y;
+            }
+
+            var averageX = sumX / polylinePoints.Count;
+            var averageY = sumY / polylinePoints.Count;
+
+            var firstPoint = polylinePoints[0];
+            var lastPoint = polylinePoints[polylinePoints.Count - 1];
+
+            var directionX = lastPoint.X - firstPoint.X;
+            var directionY = lastPoint.Y - firstPoint.Y;
+
+            var directionLength = Math.Sqrt(directionX * directionX + directionY * directionY);
+            if (directionLength < 1e-9) return new TSG.Point(averageX, averageY + offsetMillimeters, 0);
+
+            var normalX = -directionY / directionLength;
+            var normalY = directionX / directionLength;
+
+            return new TSG.Point(
+                averageX + normalX * offsetMillimeters,
+                averageY + normalY * offsetMillimeters,
+                0
+            );
+        }
+
+        private static double ComputeDistance2D(TSG.Point firstPoint, TSG.Point secondPoint) {
+            var differenceX = firstPoint.X - secondPoint.X;
+            var differenceY = firstPoint.Y - secondPoint.Y;
+            return Math.Sqrt(differenceX * differenceX + differenceY * differenceY);
+        }
+
+        private static double ComputeAngleInDegrees(TSG.Point firstPoint, TSG.Point vertexPoint, TSG.Point secondPoint,
+            double minimumSegmentLength) {
+            var firstVectorX = firstPoint.X - vertexPoint.X;
+            var firstVectorY = firstPoint.Y - vertexPoint.Y;
+
+            var secondVectorX = secondPoint.X - vertexPoint.X;
+            var secondVectorY = secondPoint.Y - vertexPoint.Y;
+
+            var firstVectorLength = Math.Sqrt(firstVectorX * firstVectorX + firstVectorY * firstVectorY);
+            var secondVectorLength = Math.Sqrt(secondVectorX * secondVectorX + secondVectorY * secondVectorY);
+
+            if (firstVectorLength < minimumSegmentLength || secondVectorLength < minimumSegmentLength) return 180.0;
+
+            var dotProduct = firstVectorX * secondVectorX + firstVectorY * secondVectorY;
+            var cosineValue = dotProduct / (firstVectorLength * secondVectorLength);
+
+            if (cosineValue > 1.0) cosineValue = 1.0;
+            if (cosineValue < -1.0) cosineValue = -1.0;
+
+            var angleInRadians = Math.Acos(cosineValue);
+            return angleInRadians * 180.0 / Math.PI;
+        }
+
+        /// Filtruje słownik krawędzi, pozostawiając tylko te, których numery są w zbiorze "requested". Jeśli "requested" jest pusty, zwraca wszystkie krawędzie. Jeśli po filtracji nie zostanie żadna krawędź, pokazuje komunikat. Dodatkowo informuje o brakujących numerach.
+        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> FilterEdgesOrShowMessage(
+            Dictionary<int, Tuple<TSG.Point, TSG.Point>> edges,
+            HashSet<int> requested
+        ) {
+            if (edges == null || edges.Count == 0) return null;
+            if (requested == null || requested.Count == 0) return edges;
+
+            var filtered = edges
+                .Where(kvp => requested.Contains(kvp.Key))
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+            if (filtered.Count == 0) {
+                MessageBox.Show("Nie znaleziono krawędzi o podanych numerach.");
+                return null;
+            }
+
+            var missing = requested.Where(n => !edges.ContainsKey(n)).OrderBy(n => n).ToList();
+            if (missing.Count > 0)
+                MessageBox.Show("Brak krawędzi o numerach: " + string.Join(", ", missing));
+
+            return filtered;
+        }
+
+        /// Zapewnia, że linia będzie skierowana w lewo lub w górę (w zależności od orientacji), co jest ważne dla poprawnego działania funkcji tworzenia przekroju.
+        private static void ForceSectionLookLeftOrUp(ref TSG.Point startPoint, ref TSG.Point endPoint) {
+            var dx = endPoint.X - startPoint.X;
+            var dy = endPoint.Y - startPoint.Y;
+
+            var len = Math.Sqrt(dx * dx + dy * dy);
+            if (len < 1e-9) return;
+
+            var nx = -dy / len;
+            var ny = dx / len;
+
+            if (Math.Abs(ny) >= Math.Abs(nx)) {
+                if (ny < 0) (startPoint, endPoint) = (endPoint, startPoint);
+            }
+            else {
+                if (nx > 0) (startPoint, endPoint) = (endPoint, startPoint);
+            }
+        }
+
+        /// Transformuje listę krawędzi (punktów A i B) z jednej CS do drugiej, zachowując tylko X i Y (ustawiając Z=0).
+        private static List<(TSG.Point A, TSG.Point B)> TransformEdgesBetweenCoordinateSystems(
+            TSG.CoordinateSystem fromCs,
+            TSG.CoordinateSystem toCs,
+            List<(TSG.Point A, TSG.Point B)> edges
+        ) {
+            if (edges == null || edges.Count == 0)
+                return new List<(TSG.Point A, TSG.Point B)>();
+
+            var fromToGlobal = TSG.MatrixFactory.FromCoordinateSystem(fromCs);
+            var globalToTo = TSG.MatrixFactory.ToCoordinateSystem(toCs);
+
+            var result = new List<(TSG.Point A, TSG.Point B)>(edges.Count);
+
+            for (var i = 0; i < edges.Count; i++) {
+                var aGlobal = fromToGlobal.Transform(edges[i].A);
+                var bGlobal = fromToGlobal.Transform(edges[i].B);
+
+                var aTo = globalToTo.Transform(aGlobal);
+                var bTo = globalToTo.Transform(bGlobal);
+
+                result.Add((
+                    new TSG.Point(aTo.X, aTo.Y, 0),
+                    new TSG.Point(bTo.X, bTo.Y, 0)
+                ));
+            }
+
+            return result;
+        }
+
+        /// Oblicza środek krawędzi w 2D (ignorując Z) jako środek prostokąta otaczającego wszystkie punkty A i B.
+        private static TSG.Point ComputeEdgesCenter2D(List<(TSG.Point A, TSG.Point B)> edges) {
+            var pts = new List<TSG.Point>(edges.Count * 2);
+            for (var i = 0; i < edges.Count; i++) {
+                pts.Add(edges[i].A);
+                pts.Add(edges[i].B);
+            }
+
+            var minX = pts.Min(p => p.X);
+            var maxX = pts.Max(p => p.X);
+            var minY = pts.Min(p => p.Y);
+            var maxY = pts.Max(p => p.Y);
+
+            return new TSG.Point((minX + maxX) * 0.5, (minY + maxY) * 0.5, 0);
+        }
+
+        /// Usuwa punkty, które są blisko siebie (w odległości epsilon)
         private static List<TSG.Point> RemoveNearDuplicates(List<TSG.Point> points, double epsilon) {
             if (points == null || points.Count == 0) return new List<TSG.Point>();
 
@@ -788,6 +1340,7 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
+        /// Sortuje punkty według kąta względem środka (średniej) wszystkich punktów. Zakłada, że punkty są w jednej płaszczyźnie.
         private static List<TSG.Point> SortByAngle(List<TSG.Point> points) {
             if (points == null || points.Count < 3) return points ?? new List<TSG.Point>();
 

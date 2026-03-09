@@ -27,6 +27,7 @@ namespace HFT_DrawingHelper {
         private const double ZStepMillimeters = 0.5;
         private const int MaximumEmptyStepsPerDirection = 80;
         private const double DuplicateToleranceMillimeters = 0.5;
+        private const double MinimumLengthMillimeters = 100.0;
 
         #endregion
 
@@ -44,21 +45,68 @@ namespace HFT_DrawingHelper {
             var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
             if (selectedView == null) return;
 
-            var edges = GetContourPlateEdges(selectedView, true);
-            if (edges != null && edges.Count > 0) {
-                DrawEdges(selectedView, edges);
-                drawing.CommitChanges();
+            var detectionResult = DetectEdgesFromSelectedView(selectedView);
+
+            if (!detectionResult.HasEdges) {
+                MessageBox.Show(detectionResult.ErrorMessage);
                 return;
             }
 
-            edges = GetLoftedPlateEdges(selectedView, true);
-            if (edges != null && edges.Count > 0) {
-                DrawEdges(selectedView, edges);
-                drawing.CommitChanges();
-                return;
-            }
+            DrawEdges(selectedView, detectionResult.EdgesByNumber);
+            drawing.CommitChanges();
+        }
 
-            MessageBox.Show("Nie znaleziono ani ContourPlate ani LoftedPlate na tym widoku.");
+        private sealed class EdgeDetectionResult {
+            public string SourceName { get; set; }
+            public Dictionary<int, Tuple<TSG.Point, TSG.Point>> EdgesByNumber { get; set; }
+            public string ErrorMessage { get; set; }
+
+            public bool HasEdges => EdgesByNumber != null && EdgesByNumber.Count > 0;
+        }
+
+        private static EdgeDetectionResult DetectEdgesFromSelectedView(TSD.View selectedView) {
+            if (selectedView == null)
+                return new EdgeDetectionResult {
+                    ErrorMessage = "Nie zaznaczono widoku."
+                };
+
+            var modelParts = GetModelPartsFromDrawingView(selectedView);
+            if (modelParts == null || modelParts.Count == 0)
+                return new EdgeDetectionResult {
+                    ErrorMessage = "Nie znaleziono żadnych elementów typu Part na tym widoku."
+                };
+
+            var contourEdges = GetContourPlateEdges(selectedView, modelParts);
+            if (contourEdges != null && contourEdges.Count > 0)
+                return new EdgeDetectionResult {
+                    SourceName = "ContourPlate",
+                    EdgesByNumber = contourEdges
+                };
+
+            var loftedEdges = GetLoftedPlateEdges(selectedView, modelParts);
+            if (loftedEdges != null && loftedEdges.Count > 0)
+                return new EdgeDetectionResult {
+                    SourceName = "LoftedPlate",
+                    EdgesByNumber = loftedEdges
+                };
+
+            var beamEdges = GetBeamEdges(selectedView, modelParts);
+            if (beamEdges != null && beamEdges.Count > 0)
+                return new EdgeDetectionResult {
+                    SourceName = "Beam",
+                    EdgesByNumber = beamEdges
+                };
+
+            var foundTypes = string.Join(", ", modelParts
+                .Select(part => part.GetType().Name)
+                .Distinct()
+                .OrderBy(typeName => typeName));
+
+            return new EdgeDetectionResult {
+                ErrorMessage =
+                    "Nie udało się wyznaczyć krawędzi dla żadnego obsługiwanego typu elementu.\n" +
+                    "Znalezione typy na widoku: " + foundTypes
+            };
         }
 
         private void DrawEdgesButton_Click(object sender, RoutedEventArgs e) {
@@ -79,51 +127,34 @@ namespace HFT_DrawingHelper {
             var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
             if (selectedView == null) return;
 
+            var detectionResult = DetectEdgesFromSelectedView(selectedView);
+
+            if (!detectionResult.HasEdges) {
+                MessageBox.Show(detectionResult.ErrorMessage);
+                return;
+            }
+
             var requestedGroupNumbers = ParseEdgeNumbers(edgeNumbersInput);
 
             const double joinToleranceMillimeters = 0.5;
             const double nearStraightAngleDegrees = 170.0;
 
-            var contourEdgesBySegmentNumber = GetContourPlateEdges(selectedView, false);
-            if (contourEdgesBySegmentNumber != null && contourEdgesBySegmentNumber.Count > 0) {
-                var contourGroupsByGroupNumber = BuildNumberedEdgeGroups(
-                    contourEdgesBySegmentNumber,
-                    joinToleranceMillimeters,
-                    nearStraightAngleDegrees
-                );
+            var groupsByGroupNumber = BuildNumberedEdgeGroups(
+                detectionResult.EdgesByNumber,
+                joinToleranceMillimeters,
+                nearStraightAngleDegrees
+            );
 
-                var contourSectionEdgesByGroupNumber = contourGroupsByGroupNumber
-                    .Where(pair => pair.Value != null && pair.Value.SectionEdge != null)
-                    .ToDictionary(pair => pair.Key, pair => pair.Value.SectionEdge);
+            var sectionEdgesByGroupNumber = groupsByGroupNumber
+                .Where(pair => pair.Value?.SectionEdge != null)
+                .ToDictionary(pair => pair.Key, pair => pair.Value.SectionEdge);
 
-                var filteredSectionEdges =
-                    FilterEdgesOrShowMessage(contourSectionEdgesByGroupNumber, requestedGroupNumbers);
-                if (filteredSectionEdges == null) return;
+            var filteredSectionEdges =
+                FilterEdgesOrShowMessage(sectionEdgesByGroupNumber, requestedGroupNumbers);
+            if (filteredSectionEdges == null) return;
 
-                CreateSectionViewsFromEdges(selectedView, filteredSectionEdges);
-                drawing.CommitChanges();
-                return;
-            }
-
-            var loftedEdgesBySegmentNumber = GetLoftedPlateEdges(selectedView, false);
-            if (loftedEdgesBySegmentNumber != null && loftedEdgesBySegmentNumber.Count > 0) {
-                var loftedGroupsByGroupNumber = BuildNumberedEdgeGroups(
-                    loftedEdgesBySegmentNumber,
-                    joinToleranceMillimeters,
-                    nearStraightAngleDegrees
-                );
-
-                var loftedSectionEdgesByGroupNumber = loftedGroupsByGroupNumber
-                    .Where(pair => pair.Value?.SectionEdge != null)
-                    .ToDictionary(pair => pair.Key, pair => pair.Value.SectionEdge);
-
-                var filteredSectionEdges =
-                    FilterEdgesOrShowMessage(loftedSectionEdgesByGroupNumber, requestedGroupNumbers);
-                if (filteredSectionEdges == null) return;
-
-                CreateSectionViewsFromEdges(selectedView, filteredSectionEdges);
-                drawing.CommitChanges();
-            }
+            CreateSectionViewsFromEdges(selectedView, filteredSectionEdges);
+            drawing.CommitChanges();
         }
 
         private void AddSectionsButton_Click(object sender, RoutedEventArgs e) {
@@ -288,7 +319,7 @@ namespace HFT_DrawingHelper {
 
         private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetContourPlateEdges(
             TSD.View selectedView,
-            bool showMessages
+            List<TSM.Part> modelParts
         ) {
             var edgesByNumber = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
             if (selectedView == null) return edgesByNumber;
@@ -300,24 +331,15 @@ namespace HFT_DrawingHelper {
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
 
             try {
-                var modelParts = GetModelPartsFromDrawingView(selectedView, showMessages);
-
                 var contourPlate = FindFirstContourPlate(modelParts);
-                if (contourPlate == null) {
-                    if (showMessages) MessageBox.Show("Nie znaleziono ContourPlate na tym widoku.");
-                    return edgesByNumber;
-                }
+                if (contourPlate == null) return edgesByNumber;
 
                 workPlaneHandler.SetCurrentTransformationPlane(
                     new TSM.TransformationPlane(contourPlate.GetCoordinateSystem()));
 
                 var edgesInPlatePlane = GetContourPlateEdgesInPlane(contourPlate);
 
-                if (edgesInPlatePlane == null || edgesInPlatePlane.Count == 0) {
-                    if (showMessages)
-                        MessageBox.Show("Nie znaleziono krawędzi w płaszczyźnie ContourPlate.");
-                    return edgesByNumber;
-                }
+                if (edgesInPlatePlane == null || edgesInPlatePlane.Count == 0) return edgesByNumber;
 
                 workPlaneHandler.SetCurrentTransformationPlane(
                     new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem));
@@ -401,25 +423,19 @@ namespace HFT_DrawingHelper {
 
         private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetLoftedPlateEdges(
             TSD.View selectedView,
-            bool showMessages
+            List<TSM.Part> modelParts
         ) {
             var edgesByNumber = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
             if (selectedView == null) return edgesByNumber;
 
-            const double minimumLengthMillimeters = 100.0;
 
             var model = new TSM.Model();
             var workPlaneHandler = model.GetWorkPlaneHandler();
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
 
             try {
-                var modelParts = GetModelPartsFromDrawingView(selectedView, showMessages);
-
                 var loftedPlate = FindFirstLoftedPlate(modelParts);
-                if (loftedPlate == null) {
-                    if (showMessages) MessageBox.Show("Nie znaleziono LoftedPlate na tym widoku.");
-                    return edgesByNumber;
-                }
+                if (loftedPlate == null) return edgesByNumber;
 
                 workPlaneHandler.SetCurrentTransformationPlane(
                     new TSM.TransformationPlane(loftedPlate.GetCoordinateSystem())
@@ -427,12 +443,7 @@ namespace HFT_DrawingHelper {
 
                 var sampledPointsInPlatePlane = GetLoftedPlateSamplePointsByAdaptiveZSweep(loftedPlate);
 
-                if (sampledPointsInPlatePlane == null || sampledPointsInPlatePlane.Count == 0) {
-                    if (showMessages)
-                        MessageBox.Show(
-                            "Nie udało się pobrać punktów LoftedPlate metodą adaptacyjnych przekrojów po Z.");
-                    return edgesByNumber;
-                }
+                if (sampledPointsInPlatePlane == null || sampledPointsInPlatePlane.Count == 0) return edgesByNumber;
 
                 workPlaneHandler.SetCurrentTransformationPlane(
                     new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem)
@@ -446,11 +457,7 @@ namespace HFT_DrawingHelper {
 
                 var edgesInViewPlane = BuildLoftedPlateEnvelopeEdgesInView(sampledPointsInViewPlane);
 
-                if (edgesInViewPlane == null || edgesInViewPlane.Count == 0) {
-                    if (showMessages)
-                        MessageBox.Show("Nie udało się wyznaczyć obrysu LoftedPlate w układzie widoku.");
-                    return edgesByNumber;
-                }
+                if (edgesInViewPlane == null || edgesInViewPlane.Count == 0) return edgesByNumber;
 
                 var number = 0;
 
@@ -463,7 +470,7 @@ namespace HFT_DrawingHelper {
                     var dz = endPoint.Z - startPoint.Z;
 
                     var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
-                    if (length <= minimumLengthMillimeters)
+                    if (length <= MinimumLengthMillimeters)
                         continue;
 
                     number++;
@@ -548,26 +555,6 @@ namespace HFT_DrawingHelper {
             return RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
         }
 
-        private static List<TSG.Point> GetIntersectionPointsAtLocalZ(TSM.Solid solid, double zValue) {
-            var points = new List<TSG.Point>();
-            if (solid == null) return points;
-
-            var enumerator = solid.GetAllIntersectionPoints(
-                new TSG.Point(0, 0, zValue),
-                new TSG.Point(1, 0, zValue),
-                new TSG.Point(0, 1, zValue)
-            );
-
-            while (enumerator.MoveNext()) {
-                if (!(enumerator.Current is TSG.Point point))
-                    continue;
-
-                points.Add(new TSG.Point(point.X, point.Y, 0));
-            }
-
-            return points;
-        }
-
         private static List<TSG.Point> TransformPointsBetweenCoordinateSystems(
             TSG.CoordinateSystem fromCoordinateSystem,
             TSG.CoordinateSystem toCoordinateSystem,
@@ -579,12 +566,12 @@ namespace HFT_DrawingHelper {
             var fromToGlobal = TSG.MatrixFactory.FromCoordinateSystem(fromCoordinateSystem);
             var globalToTarget = TSG.MatrixFactory.ToCoordinateSystem(toCoordinateSystem);
 
-            for (var index = 0; index < points.Count; index++) {
-                var globalPoint = fromToGlobal.Transform(points[index]);
-                var targetPoint = globalToTarget.Transform(globalPoint);
-
-                result.Add(new TSG.Point(targetPoint.X, targetPoint.Y, 0));
-            }
+            result.AddRange(from t in points
+                select fromToGlobal.Transform(t)
+                into globalPoint
+                select globalToTarget.Transform(globalPoint)
+                into targetPoint
+                select new TSG.Point(targetPoint.X, targetPoint.Y, 0));
 
             return result;
         }
@@ -597,6 +584,7 @@ namespace HFT_DrawingHelper {
             const double minimumSegmentLengthMillimeters = 5.0;
             const int targetBinCount = 60;
             const int smoothingWindowRadius = 2;
+            const int edgeLockBinCount = 3;
 
             var uniquePoints = RemoveNearDuplicates(points, duplicateToleranceMillimeters);
             if (uniquePoints.Count < 3) return edges;
@@ -611,8 +599,7 @@ namespace HFT_DrawingHelper {
 
             var bins = new SortedDictionary<int, List<TSG.Point>>();
 
-            for (var index = 0; index < uniquePoints.Count; index++) {
-                var point = uniquePoints[index];
+            foreach (var point in uniquePoints) {
                 var binIndex = (int)Math.Floor((point.X - minimumX) / binWidth);
 
                 if (!bins.ContainsKey(binIndex))
@@ -623,8 +610,8 @@ namespace HFT_DrawingHelper {
 
             var orderedBins = bins
                 .OrderBy(pair => pair.Key)
-                .Select(pair => pair.Value)
-                .Where(bucket => bucket != null && bucket.Count > 0)
+                .Select(pair => pair.Value.OrderBy(point => point.Y).ThenBy(point => point.X).ToList())
+                .Where(bucket => bucket.Count > 0)
                 .ToList();
 
             if (orderedBins.Count < 2)
@@ -633,12 +620,7 @@ namespace HFT_DrawingHelper {
             var upperChain = new List<TSG.Point>();
             var lowerChain = new List<TSG.Point>();
 
-            for (var bucketIndex = 0; bucketIndex < orderedBins.Count; bucketIndex++) {
-                var bucket = orderedBins[bucketIndex]
-                    .OrderBy(point => point.Y)
-                    .ThenBy(point => point.X)
-                    .ToList();
-
+            foreach (var bucket in orderedBins) {
                 if (bucket.Count == 0)
                     continue;
 
@@ -660,6 +642,35 @@ namespace HFT_DrawingHelper {
             upperChain = SmoothPolylineByMedianY(upperChain, smoothingWindowRadius);
             lowerChain = SmoothPolylineByMedianY(lowerChain, smoothingWindowRadius);
 
+            if (upperChain.Count < 2 || lowerChain.Count < 2)
+                return edges;
+
+            var leftLockedX = uniquePoints
+                .OrderBy(point => point.X)
+                .Take(Math.Min(20, uniquePoints.Count))
+                .Average(point => point.X);
+
+            var rightLockedX = uniquePoints
+                .OrderByDescending(point => point.X)
+                .Take(Math.Min(20, uniquePoints.Count))
+                .Average(point => point.X);
+
+            var leftLockCount = Math.Min(edgeLockBinCount, Math.Min(upperChain.Count, lowerChain.Count));
+            var rightLockCount = Math.Min(edgeLockBinCount, Math.Min(upperChain.Count, lowerChain.Count));
+
+            for (var index = 0; index < leftLockCount; index++) {
+                upperChain[index] = new TSG.Point(leftLockedX, upperChain[index].Y, 0);
+                lowerChain[index] = new TSG.Point(leftLockedX, lowerChain[index].Y, 0);
+            }
+
+            for (var index = 0; index < rightLockCount; index++) {
+                var upperIndex = upperChain.Count - 1 - index;
+                var lowerIndex = lowerChain.Count - 1 - index;
+
+                upperChain[upperIndex] = new TSG.Point(rightLockedX, upperChain[upperIndex].Y, 0);
+                lowerChain[lowerIndex] = new TSG.Point(rightLockedX, lowerChain[lowerIndex].Y, 0);
+            }
+
             upperChain = RemoveNearDuplicates(upperChain, duplicateToleranceMillimeters);
             lowerChain = RemoveNearDuplicates(lowerChain, duplicateToleranceMillimeters);
 
@@ -669,10 +680,7 @@ namespace HFT_DrawingHelper {
             if (upperChain.Count < 2 || lowerChain.Count < 2)
                 return edges;
 
-            var boundaryPoints = new List<TSG.Point>();
-
-            for (var index = 0; index < upperChain.Count; index++)
-                boundaryPoints.Add(new TSG.Point(upperChain[index].X, upperChain[index].Y, 0));
+            var boundaryPoints = upperChain.Select(t => new TSG.Point(t.X, t.Y, 0)).ToList();
 
             for (var index = lowerChain.Count - 1; index >= 0; index--)
                 boundaryPoints.Add(new TSG.Point(lowerChain[index].X, lowerChain[index].Y, 0));
@@ -813,6 +821,208 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
+        #region Beam
+
+        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetBeamEdges(
+            TSD.View selectedView,
+            List<TSM.Part> modelParts
+        ) {
+            var edgesByNumber = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
+            if (selectedView == null) return edgesByNumber;
+
+            var model = new TSM.Model();
+            var workPlaneHandler = model.GetWorkPlaneHandler();
+            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
+
+            try {
+                var beam = FindFirstBeam(modelParts);
+                if (beam == null) return edgesByNumber;
+
+                workPlaneHandler.SetCurrentTransformationPlane(
+                    new TSM.TransformationPlane(beam.GetCoordinateSystem())
+                );
+
+                var sampledPointsInBeamPlane = GetBeamSamplePointsByAdaptiveZSweep(beam);
+
+                if (sampledPointsInBeamPlane == null || sampledPointsInBeamPlane.Count == 0) return edgesByNumber;
+
+                workPlaneHandler.SetCurrentTransformationPlane(
+                    new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem)
+                );
+
+                var sampledPointsInViewPlane = TransformPointsBetweenCoordinateSystems(
+                    beam.GetCoordinateSystem(),
+                    selectedView.DisplayCoordinateSystem,
+                    sampledPointsInBeamPlane
+                );
+                var edgesInViewPlane = BuildBeamEnvelopeEdgesInView(sampledPointsInViewPlane);
+
+                if (edgesInViewPlane == null || edgesInViewPlane.Count == 0) return edgesByNumber;
+
+                var number = 0;
+
+                for (var index = 0; index < edgesInViewPlane.Count; index++) {
+                    var startPoint = edgesInViewPlane[index].A;
+                    var endPoint = edgesInViewPlane[index].B;
+
+                    var dx = endPoint.X - startPoint.X;
+                    var dy = endPoint.Y - startPoint.Y;
+                    var dz = endPoint.Z - startPoint.Z;
+
+                    var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                    if (length <= MinimumLengthMillimeters)
+                        continue;
+
+                    number++;
+                    edgesByNumber[number] = Tuple.Create(
+                        new TSG.Point(startPoint.X, startPoint.Y, 0),
+                        new TSG.Point(endPoint.X, endPoint.Y, 0)
+                    );
+                }
+
+                return edgesByNumber;
+            }
+            finally {
+                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
+            }
+        }
+
+        private static List<TSG.Point> GetBeamSamplePointsByAdaptiveZSweep(TSM.Beam beam) {
+            var points = new List<TSG.Point>();
+            if (beam == null) return points;
+
+            var solid = beam.GetSolid();
+            if (solid == null) return points;
+
+            var minimumPoint = solid.MinimumPoint;
+            var maximumPoint = solid.MaximumPoint;
+
+            var centerZ = (minimumPoint.Z + maximumPoint.Z) * 0.5;
+
+            var upwardEmptySteps = 0;
+            var downwardEmptySteps = 0;
+
+            var offset = 0.0;
+            var firstIteration = true;
+
+            while (upwardEmptySteps < MaximumEmptyStepsPerDirection ||
+                   downwardEmptySteps < MaximumEmptyStepsPerDirection) {
+                if (firstIteration) {
+                    var centerPoints = GetIntersectionPointsAtLocalZ(solid, centerZ);
+
+                    if (centerPoints.Count > 0) {
+                        points.AddRange(centerPoints);
+                        upwardEmptySteps = 0;
+                        downwardEmptySteps = 0;
+                    }
+                    else {
+                        upwardEmptySteps++;
+                        downwardEmptySteps++;
+                    }
+
+                    firstIteration = false;
+                    offset += ZStepMillimeters;
+                    continue;
+                }
+
+                if (upwardEmptySteps < MaximumEmptyStepsPerDirection) {
+                    var upperZ = centerZ + offset;
+                    var upperPoints = GetIntersectionPointsAtLocalZ(solid, upperZ);
+
+                    if (upperPoints.Count > 0) {
+                        points.AddRange(upperPoints);
+                        upwardEmptySteps = 0;
+                    }
+                    else
+                        upwardEmptySteps++;
+                }
+
+                if (downwardEmptySteps < MaximumEmptyStepsPerDirection) {
+                    var lowerZ = centerZ - offset;
+                    var lowerPoints = GetIntersectionPointsAtLocalZ(solid, lowerZ);
+
+                    if (lowerPoints.Count > 0) {
+                        points.AddRange(lowerPoints);
+                        downwardEmptySteps = 0;
+                    }
+                    else
+                        downwardEmptySteps++;
+                }
+
+                offset += ZStepMillimeters;
+            }
+
+            return RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
+        }
+
+        private static List<(TSG.Point A, TSG.Point B)> BuildBeamEnvelopeEdgesInView(List<TSG.Point> points) {
+            var edges = new List<(TSG.Point A, TSG.Point B)>();
+            if (points == null || points.Count < 3) return edges;
+
+            var uniquePoints = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
+            if (uniquePoints.Count < 3) return edges;
+
+            var hull = BuildConvexHull2D(uniquePoints);
+            if (hull.Count < 3) return edges;
+
+            for (var index = 0; index < hull.Count; index++) {
+                var startPoint = hull[index];
+                var endPoint = hull[(index + 1) % hull.Count];
+
+                if (ComputeDistance2D(startPoint, endPoint) <= DuplicateToleranceMillimeters)
+                    continue;
+
+                edges.Add((
+                    new TSG.Point(startPoint.X, startPoint.Y, 0),
+                    new TSG.Point(endPoint.X, endPoint.Y, 0)
+                ));
+            }
+
+            return edges;
+        }
+
+        private static List<TSG.Point> BuildConvexHull2D(List<TSG.Point> points) {
+            if (points == null || points.Count < 3)
+                return points ?? new List<TSG.Point>();
+
+            var sortedPoints = points
+                .OrderBy(point => point.X)
+                .ThenBy(point => point.Y)
+                .ToList();
+
+            var lowerHull = new List<TSG.Point>();
+            foreach (var point in sortedPoints) {
+                while (lowerHull.Count >= 2 &&
+                       Cross(lowerHull[lowerHull.Count - 2], lowerHull[lowerHull.Count - 1], point) <= 0)
+                    lowerHull.RemoveAt(lowerHull.Count - 1);
+
+                lowerHull.Add(point);
+            }
+
+            var upperHull = new List<TSG.Point>();
+            for (var index = sortedPoints.Count - 1; index >= 0; index--) {
+                var point = sortedPoints[index];
+
+                while (upperHull.Count >= 2 &&
+                       Cross(upperHull[upperHull.Count - 2], upperHull[upperHull.Count - 1], point) <= 0)
+                    upperHull.RemoveAt(upperHull.Count - 1);
+
+                upperHull.Add(point);
+            }
+
+            lowerHull.RemoveAt(lowerHull.Count - 1);
+            upperHull.RemoveAt(upperHull.Count - 1);
+
+            return lowerHull.Concat(upperHull).ToList();
+        }
+
+        private static double Cross(TSG.Point firstPoint, TSG.Point secondPoint, TSG.Point thirdPoint) {
+            return (secondPoint.X - firstPoint.X) * (thirdPoint.Y - firstPoint.Y) -
+                   (secondPoint.Y - firstPoint.Y) * (thirdPoint.X - firstPoint.X);
+        }
+
+        #endregion
+
         /// Pobiera zaznaczony widok rysunkowy. Jeśli nie ma zaznaczenia lub zaznaczenie nie jest widokiem, pokazuje komunikat i zwraca null.
         private static TSD.View GetSelectedViewOrShowMessage(TSD.DrawingHandler drawingHandler) {
             var selector = drawingHandler.GetDrawingObjectSelector();
@@ -840,10 +1050,9 @@ namespace HFT_DrawingHelper {
         }
 
         /// Pobiera unikalne elementy typu Part powiązane z obiektami rysunkowymi na danym widoku.
-        private static List<TSM.Part> GetModelPartsFromDrawingView(TSD.View drawingView, bool showMessages) {
+        private static List<TSM.Part> GetModelPartsFromDrawingView(TSD.View drawingView) {
             var modelParts = new List<TSM.Part>();
             var addedModelIdentifiers = new HashSet<string>();
-            var partTypeCounters = new Dictionary<string, int>();
 
             var model = new TSM.Model();
 
@@ -875,38 +1084,33 @@ namespace HFT_DrawingHelper {
 
                     addedModelIdentifiers.Add(identifierString);
                     modelParts.Add(modelPart);
-
-                    var partTypeName = modelPart.GetType().Name;
-                    if (partTypeCounters.ContainsKey(partTypeName))
-                        partTypeCounters[partTypeName] += 1;
-                    else
-                        partTypeCounters.Add(partTypeName, 1);
                 }
                 catch {
                     // ignored
                 }
             }
 
-            if (!showMessages) return modelParts;
+            return modelParts;
+        }
 
-            switch (modelParts.Count) {
-                case 0:
-                    MessageBox.Show("Znaleziono: 0 elementów typu Part na tym widoku.");
-                    return modelParts;
-                case 1:
-                    MessageBox.Show("Znaleziono: 1 element typu " + modelParts[0].GetType().Name + ".");
-                    return modelParts;
+        private static List<TSG.Point> GetIntersectionPointsAtLocalZ(TSM.Solid solid, double zValue) {
+            var points = new List<TSG.Point>();
+            if (solid == null) return points;
+
+            var enumerator = solid.GetAllIntersectionPoints(
+                new TSG.Point(0, 0, zValue),
+                new TSG.Point(1, 0, zValue),
+                new TSG.Point(0, 1, zValue)
+            );
+
+            while (enumerator.MoveNext()) {
+                if (!(enumerator.Current is TSG.Point point))
+                    continue;
+
+                points.Add(new TSG.Point(point.X, point.Y, point.Z));
             }
 
-            var summaryLines = partTypeCounters
-                .OrderByDescending(pair => pair.Value)
-                .Select(pair => pair.Key + " (" + pair.Value + ")")
-                .ToList();
-
-            MessageBox.Show("Znaleziono: " + modelParts.Count + " elementów typów:\n" +
-                            string.Join("\n", summaryLines));
-
-            return modelParts;
+            return points;
         }
 
         /// Pobiera atrybuty dla widoku i marku przekroju zdefiniowane w Tekla Structures. Zakłada, że atrybuty o podanych nazwach istnieją.
@@ -995,6 +1199,17 @@ namespace HFT_DrawingHelper {
             foreach (var part in parts)
                 if (part is TSM.LoftedPlate loftedPlate)
                     return loftedPlate;
+
+            return null;
+        }
+
+        /// Szuka pierwszego elementu typu Beam w liście. Jeśli nie znajdzie, zwraca null.
+        private static TSM.Beam FindFirstBeam(List<TSM.Part> parts) {
+            if (parts == null || parts.Count == 0) return null;
+
+            foreach (var part in parts)
+                if (part is TSM.Beam beam)
+                    return beam;
 
             return null;
         }

@@ -171,6 +171,7 @@
             <DependentUpon>App.xaml</DependentUpon>
             <SubType>Code</SubType>
         </Compile>
+        <Compile Include="MainWindow.Dimensions.cs"/>
         <Compile Include="MainWindow.Draw.cs"/>
         <Compile Include="MainWindow.Sections.cs"/>
         <Compile Include="MainWindow.xaml.cs">

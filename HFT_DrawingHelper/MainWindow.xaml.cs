@@ -25,11 +25,7 @@ namespace HFT_DrawingHelper {
         }
 
         private void AddDimensionsButton_Click(object sender, RoutedEventArgs e) {
-            AddDimensions();
-        }
-
-        private void AddDimensions() {
-            var elements = ElementsToDimensionTextBox.Text;
+            AddDimensions(ElementsToDimensionTextBox.Text);
         }
     }
 }

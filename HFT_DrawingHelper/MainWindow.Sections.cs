@@ -7,11 +7,7 @@ using TSD = Tekla.Structures.Drawing;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
-        // SECTION VIEW PARAMETERS
-        private const double DepthUp = 1.0;
-        private const double DepthDown = 1.0;
-        private const double SectionLineLengthMillimeters = 300.0;
-        private const double Gap = 10.0;
+        #region Main Section Creation Flow
 
         private static void AddSections(string edgeNumbersInput) {
             var drawingHandler = new TSD.DrawingHandler();
@@ -48,6 +44,11 @@ namespace HFT_DrawingHelper {
             CreateSectionViewsFromEdges(selectedView, filteredSectionEdges);
             drawing.CommitChanges();
         }
+
+        #endregion
+
+
+        #region Section View Creation
 
         private static void CreateSectionViewsFromEdges(
             TSD.View baseView,
@@ -139,6 +140,47 @@ namespace HFT_DrawingHelper {
             }
         }
 
+        #endregion
+
+
+        #region Section Attributes
+
+        private static (TSD.View.ViewAttributes, TSD.SectionMarkBase.SectionMarkAttributes) GetSectionAttributes() {
+            var view = new TSD.View.ViewAttributes(ViewAttributeName);
+            var mark = new TSD.SectionMarkBase.SectionMarkAttributes();
+            mark.LoadAttributes(MarkAttributeName);
+
+            return (view, mark);
+        }
+
+        #endregion
+
+
+        #region Section Orientation
+
+        private static void ForceSectionLookLeftOrUp(ref TSG.Point startPoint, ref TSG.Point endPoint) {
+            var dx = endPoint.X - startPoint.X;
+            var dy = endPoint.Y - startPoint.Y;
+
+            var length = Math.Sqrt(dx * dx + dy * dy);
+            if (length < 1e-9) return;
+
+            var nx = -dy / length;
+            var ny = dx / length;
+
+            if (Math.Abs(ny) >= Math.Abs(nx)) {
+                if (ny < 0) (startPoint, endPoint) = (endPoint, startPoint);
+            }
+            else {
+                if (nx > 0) (startPoint, endPoint) = (endPoint, startPoint);
+            }
+        }
+
+        #endregion
+
+
+        #region Edge Filtering
+
         private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> FilterEdgesOrShowMessage(
             Dictionary<int, Tuple<TSG.Point, TSG.Point>> edges,
             HashSet<int> requested
@@ -160,5 +202,16 @@ namespace HFT_DrawingHelper {
 
             return filtered;
         }
+
+        #endregion
+
+        #region Section Constants
+
+        private const double DepthUp = 1.0;
+        private const double DepthDown = 1.0;
+        private const double SectionLineLengthMillimeters = 300.0;
+        private const double Gap = 10.0;
+
+        #endregion
     }
 }

@@ -9,11 +9,11 @@ using TSD = Tekla.Structures.Drawing;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
-        // ATTRIBUTE NAMES
+        #region Constants
+
         private const string ViewAttributeName = "#HFT_Kant_Section";
         private const string MarkAttributeName = "#HFT_SECTION_V";
 
-        // EDGE DETECTION PARAMETERS
         private const double ZStepMillimeters = 0.5;
         private const int MaximumEmptyStepsPerDirection = 80;
         private const double DuplicateToleranceMillimeters = 0.5;
@@ -23,10 +23,13 @@ namespace HFT_DrawingHelper {
         private const double JoinToleranceMillimeters = 0.5;
         private const double NumberOffsetMillimeters = 20.0;
 
-        // ENVELOPE BUILDING PARAMETERS
         private const int TargetBinCount = 60;
         private const int SmoothingWindowRadius = 2;
         private const int EdgeLockBinCount = 3;
+
+        #endregion
+
+        #region Main Edge Detection Flow
 
         private static string DrawEdgesWithNumbers() {
             var drawingHandler = new TSD.DrawingHandler();
@@ -111,6 +114,10 @@ namespace HFT_DrawingHelper {
                     "Znalezione typy na widoku: " + foundTypes
             };
         }
+
+        #endregion
+
+        #region Edge Detection By Part Type
 
         private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetContourPlateEdges(
             TSD.View selectedView,
@@ -311,6 +318,10 @@ namespace HFT_DrawingHelper {
             }
         }
 
+        #endregion
+
+        #region Sampling
+
         private static List<TSG.Point> GetSamplePointsByAdaptiveZSweep(TSM.Solid solid) {
             var points = new List<TSG.Point>();
             if (solid == null) return points;
@@ -373,6 +384,28 @@ namespace HFT_DrawingHelper {
 
             return RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
         }
+
+        private static List<TSG.Point> GetIntersectionPointsAtLocalZ(TSM.Solid solid, double zValue) {
+            var points = new List<TSG.Point>();
+            if (solid == null) return points;
+
+            var enumerator = solid.GetAllIntersectionPoints(
+                new TSG.Point(0, 0, zValue),
+                new TSG.Point(1, 0, zValue),
+                new TSG.Point(0, 1, zValue)
+            );
+
+            while (enumerator.MoveNext()) {
+                if (!(enumerator.Current is TSG.Point point)) continue;
+                points.Add(new TSG.Point(point.X, point.Y, point.Z));
+            }
+
+            return points;
+        }
+
+        #endregion
+
+        #region Envelope Building
 
         private static List<(TSG.Point A, TSG.Point B)> BuildLoftedPlateEnvelopeEdgesInView(List<TSG.Point> points) {
             var edges = new List<(TSG.Point A, TSG.Point B)>();
@@ -510,6 +543,10 @@ namespace HFT_DrawingHelper {
 
             return edges;
         }
+
+        #endregion
+
+        #region Drawing And Numbering
 
         private static void DrawEdges(TSD.View view, Dictionary<int, Tuple<TSG.Point, TSG.Point>> edgesByNumber) {
             if (view == null) return;
@@ -893,56 +930,9 @@ namespace HFT_DrawingHelper {
             );
         }
 
-        private static double ComputeDistance2D(TSG.Point firstPoint, TSG.Point secondPoint) {
-            var differenceX = firstPoint.X - secondPoint.X;
-            var differenceY = firstPoint.Y - secondPoint.Y;
-            return Math.Sqrt(differenceX * differenceX + differenceY * differenceY);
-        }
+        #endregion
 
-        private static double ComputeAngleInDegrees(
-            TSG.Point firstPoint,
-            TSG.Point vertexPoint,
-            TSG.Point secondPoint,
-            double minimumSegmentLength
-        ) {
-            var firstVectorX = firstPoint.X - vertexPoint.X;
-            var firstVectorY = firstPoint.Y - vertexPoint.Y;
-
-            var secondVectorX = secondPoint.X - vertexPoint.X;
-            var secondVectorY = secondPoint.Y - vertexPoint.Y;
-
-            var firstVectorLength = Math.Sqrt(firstVectorX * firstVectorX + firstVectorY * firstVectorY);
-            var secondVectorLength = Math.Sqrt(secondVectorX * secondVectorX + secondVectorY * secondVectorY);
-
-            if (firstVectorLength < minimumSegmentLength || secondVectorLength < minimumSegmentLength) return 180.0;
-
-            var dotProduct = firstVectorX * secondVectorX + firstVectorY * secondVectorY;
-            var cosineValue = dotProduct / (firstVectorLength * secondVectorLength);
-
-            if (cosineValue > 1.0) cosineValue = 1.0;
-            if (cosineValue < -1.0) cosineValue = -1.0;
-
-            var angleInRadians = Math.Acos(cosineValue);
-            return angleInRadians * 180.0 / Math.PI;
-        }
-
-        private static void ForceSectionLookLeftOrUp(ref TSG.Point startPoint, ref TSG.Point endPoint) {
-            var dx = endPoint.X - startPoint.X;
-            var dy = endPoint.Y - startPoint.Y;
-
-            var length = Math.Sqrt(dx * dx + dy * dy);
-            if (length < 1e-9) return;
-
-            var nx = -dy / length;
-            var ny = dx / length;
-
-            if (Math.Abs(ny) >= Math.Abs(nx)) {
-                if (ny < 0) (startPoint, endPoint) = (endPoint, startPoint);
-            }
-            else {
-                if (nx > 0) (startPoint, endPoint) = (endPoint, startPoint);
-            }
-        }
+        #region View And Model Helpers
 
         private static TSD.View GetSelectedViewOrShowMessage(TSD.DrawingHandler drawingHandler) {
             var selector = drawingHandler.GetDrawingObjectSelector();
@@ -1020,31 +1010,9 @@ namespace HFT_DrawingHelper {
             return null;
         }
 
-        private static List<TSG.Point> GetIntersectionPointsAtLocalZ(TSM.Solid solid, double zValue) {
-            var points = new List<TSG.Point>();
-            if (solid == null) return points;
+        #endregion
 
-            var enumerator = solid.GetAllIntersectionPoints(
-                new TSG.Point(0, 0, zValue),
-                new TSG.Point(1, 0, zValue),
-                new TSG.Point(0, 1, zValue)
-            );
-
-            while (enumerator.MoveNext()) {
-                if (!(enumerator.Current is TSG.Point point)) continue;
-                points.Add(new TSG.Point(point.X, point.Y, point.Z));
-            }
-
-            return points;
-        }
-
-        private static (TSD.View.ViewAttributes, TSD.SectionMarkBase.SectionMarkAttributes) GetSectionAttributes() {
-            var view = new TSD.View.ViewAttributes(ViewAttributeName);
-            var mark = new TSD.SectionMarkBase.SectionMarkAttributes();
-            mark.LoadAttributes(MarkAttributeName);
-
-            return (view, mark);
-        }
+        #region Coordinate Systems And Transformations
 
         private static List<(TSG.Point A, TSG.Point B)> TransformEdgesBetweenCoordinateSystems(
             TSG.CoordinateSystem fromCoordinateSystem,
@@ -1211,6 +1179,43 @@ namespace HFT_DrawingHelper {
             var ry = center.Y + dx * sin + dy * cos;
 
             return new TSG.Point(rx, ry, 0);
+        }
+
+        #endregion
+
+        #region Geometry Helpers
+
+        private static double ComputeDistance2D(TSG.Point firstPoint, TSG.Point secondPoint) {
+            var differenceX = firstPoint.X - secondPoint.X;
+            var differenceY = firstPoint.Y - secondPoint.Y;
+            return Math.Sqrt(differenceX * differenceX + differenceY * differenceY);
+        }
+
+        private static double ComputeAngleInDegrees(
+            TSG.Point firstPoint,
+            TSG.Point vertexPoint,
+            TSG.Point secondPoint,
+            double minimumSegmentLength
+        ) {
+            var firstVectorX = firstPoint.X - vertexPoint.X;
+            var firstVectorY = firstPoint.Y - vertexPoint.Y;
+
+            var secondVectorX = secondPoint.X - vertexPoint.X;
+            var secondVectorY = secondPoint.Y - vertexPoint.Y;
+
+            var firstVectorLength = Math.Sqrt(firstVectorX * firstVectorX + firstVectorY * firstVectorY);
+            var secondVectorLength = Math.Sqrt(secondVectorX * secondVectorX + secondVectorY * secondVectorY);
+
+            if (firstVectorLength < minimumSegmentLength || secondVectorLength < minimumSegmentLength) return 180.0;
+
+            var dotProduct = firstVectorX * secondVectorX + firstVectorY * secondVectorY;
+            var cosineValue = dotProduct / (firstVectorLength * secondVectorLength);
+
+            if (cosineValue > 1.0) cosineValue = 1.0;
+            if (cosineValue < -1.0) cosineValue = -1.0;
+
+            var angleInRadians = Math.Acos(cosineValue);
+            return angleInRadians * 180.0 / Math.PI;
         }
 
         private static List<TSG.Point> RemoveNearDuplicates(List<TSG.Point> points, double epsilon) {
@@ -1384,6 +1389,10 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
+        #endregion
+
+        #region Nested Types
+
         private sealed class EdgeDetectionResult {
             public string SourceName { get; set; }
             public Dictionary<int, Tuple<TSG.Point, TSG.Point>> EdgesByNumber { get; set; }
@@ -1410,5 +1419,7 @@ namespace HFT_DrawingHelper {
             public List<TSG.Point> PolylinePoints { get; } = new List<TSG.Point>();
             public Tuple<TSG.Point, TSG.Point> SectionEdge { get; set; }
         }
+
+        #endregion
     }
 }

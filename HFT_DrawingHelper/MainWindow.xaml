@@ -166,4 +166,4 @@
                 Margin="350,105,0,0"
                 Click="AddDimensionsButton_Click" />
     </Grid>
-</Window>
+</Window>   

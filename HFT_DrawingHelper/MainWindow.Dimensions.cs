@@ -33,65 +33,113 @@ namespace HFT_DrawingHelper {
             }
 
             var assemblyParts = GetAssemblyPartsVisibleInView(targetAssembly, modelPartsInView);
-            if (assemblyParts.Count == 0) {
+            if (assemblyParts == null || assemblyParts.Count == 0) {
                 MessageBox.Show("Nie znaleziono części wybranego assembly na zaznaczonym widoku.");
                 return;
             }
 
             var bounds = GetAssemblyBoundsInView(selectedView, assemblyParts);
             if (bounds == null) {
-                MessageBox.Show("Nie udało się wyznaczyć obrysu assembly.");
+                MessageBox.Show("Nie udało się wyznaczyć obrysu całego elementu.");
                 return;
             }
 
-            var xCoordinates = GetDistinctBoundaryCoordinates(
-                selectedView,
-                assemblyParts,
-                bounds.MinX,
-                bounds.MaxX,
-                true
-            );
-
-            var yCoordinates = GetDistinctBoundaryCoordinates(
-                selectedView,
-                assemblyParts,
-                bounds.MinY,
-                bounds.MaxY,
-                false
-            );
-
-            CreateAssemblyDimensionSets(selectedView, bounds, xCoordinates, yCoordinates);
+            CreateAssemblyDimensionSets(selectedView, bounds);
             drawing.CommitChanges();
         }
 
         #endregion
 
-
         #region Dimension Creation
 
         private static void CreateAssemblyDimensionSets(
             TSD.View selectedView,
-            AssemblyViewBounds bounds,
-            List<double> xCoordinates,
-            List<double> yCoordinates
+            AssemblyViewBounds bounds
         ) {
             var handler = new TSD.StraightDimensionSetHandler();
+            var assemblyWidth = bounds.MaxX - bounds.MinX;
+            var assemblyHeight = bounds.MaxY - bounds.MinY;
+            var halfAssemblyWidth = assemblyWidth / 2.0;
+            var halfAssemblyHeight = assemblyHeight / 2.0;
 
-            CreateHorizontalChainDimensionSet(handler, selectedView, xCoordinates, bounds.MaxY,
-                ChainDimensionOffsetMillimeters);
+            if (assemblyWidth >= MinimumDimensionSpanMillimeters)
+                CreateHorizontalOverallDimensionSet(
+                    handler,
+                    selectedView,
+                    new TSG.Point(-halfAssemblyWidth, -halfAssemblyHeight, 0),
+                    new TSG.Point(halfAssemblyWidth, -halfAssemblyHeight, 0),
+                    OverallDimensionOffsetMillimeters,
+                    new TSG.Vector(0.0, 0.0, 0.0)
+                );
 
-            CreateHorizontalOverallDimensionSet(handler, selectedView, bounds.MinX, bounds.MaxX, bounds.MaxY,
-                OverallDimensionOffsetMillimeters);
-
-            CreateVerticalChainDimensionSet(handler, selectedView, yCoordinates, bounds.MaxX,
-                ChainDimensionOffsetMillimeters);
-
-            CreateVerticalOverallDimensionSet(handler, selectedView, bounds.MinY, bounds.MaxY, bounds.MaxX,
-                OverallDimensionOffsetMillimeters);
+            if (assemblyHeight >= MinimumDimensionSpanMillimeters)
+                CreateVerticalOverallDimensionSet(
+                    handler,
+                    selectedView,
+                    new TSG.Point(-halfAssemblyWidth, -halfAssemblyHeight, 0),
+                    new TSG.Point(-halfAssemblyWidth, halfAssemblyHeight, 0),
+                    OverallDimensionOffsetMillimeters,
+                    new TSG.Vector(0.0, 0.0, 0.0)
+                );
         }
 
         #endregion
 
+        #region Geometry Extraction
+
+        private static AssemblyViewBounds GetAssemblyBoundsInView(
+            TSD.View selectedView,
+            List<TSM.Part> assemblyParts
+        ) {
+            if (selectedView == null || assemblyParts == null || assemblyParts.Count == 0) return null;
+
+            var model = new TSM.Model();
+            var workPlaneHandler = model.GetWorkPlaneHandler();
+            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
+
+            try {
+                workPlaneHandler.SetCurrentTransformationPlane(
+                    new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem)
+                );
+
+                var allPoints = new List<TSG.Point>();
+
+                foreach (var part in assemblyParts.Where(part => part != null)) {
+                    TSM.Solid solid;
+
+                    try {
+                        solid = part.GetSolid();
+                    }
+                    catch {
+                        continue;
+                    }
+
+                    if (solid == null) continue;
+
+                    var min = solid.MinimumPoint;
+                    var max = solid.MaximumPoint;
+
+                    allPoints.Add(new TSG.Point(min.X, min.Y, 0));
+                    allPoints.Add(new TSG.Point(max.X, min.Y, 0));
+                    allPoints.Add(new TSG.Point(max.X, max.Y, 0));
+                    allPoints.Add(new TSG.Point(min.X, max.Y, 0));
+                }
+
+                if (allPoints.Count == 0) return null;
+
+                return new AssemblyViewBounds {
+                    MinX = allPoints.Min(point => point.X),
+                    MaxX = allPoints.Max(point => point.X),
+                    MinY = allPoints.Min(point => point.Y),
+                    MaxY = allPoints.Max(point => point.Y)
+                };
+            }
+            finally {
+                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
+            }
+        }
+
+        #endregion
 
         #region Data Structures
 
@@ -106,13 +154,11 @@ namespace HFT_DrawingHelper {
 
         #region Dimension Constants
 
-        private const double ChainDimensionOffsetMillimeters = 80.0;
-        private const double OverallDimensionOffsetMillimeters = 140.0;
+        private const double OverallDimensionOffsetMillimeters = 20.0;
         private const double CoordinateToleranceMillimeters = 1.0;
         private const double MinimumDimensionSpanMillimeters = 1.0;
 
         #endregion
-
 
         #region Assembly Resolution
 
@@ -121,14 +167,14 @@ namespace HFT_DrawingHelper {
             List<TSM.Part> modelPartsInView,
             string assemblyInput
         ) {
-            var assemblyFromSelection = TryGetAssemblyFromSelectedDrawingPart(drawingHandler);
-            if (assemblyFromSelection != null) return assemblyFromSelection;
-
             var assembliesInView = GetDistinctAssembliesFromParts(modelPartsInView);
             if (assembliesInView.Count == 0) return null;
 
-            var assemblyFromInput = TryGetAssemblyFromInput(assembliesInView, assemblyInput);
+            var assemblyFromInput = TryGetAssemblyFromInput(assembliesInView, modelPartsInView, assemblyInput);
             if (assemblyFromInput != null) return assemblyFromInput;
+
+            var assemblyFromSelection = TryGetAssemblyFromSelectedDrawingPart(drawingHandler);
+            if (assemblyFromSelection != null) return assemblyFromSelection;
 
             if (assembliesInView.Count == 1) return assembliesInView[0];
 
@@ -194,7 +240,11 @@ namespace HFT_DrawingHelper {
             return assemblies;
         }
 
-        private static TSM.Assembly TryGetAssemblyFromInput(List<TSM.Assembly> assemblies, string assemblyInput) {
+        private static TSM.Assembly TryGetAssemblyFromInput(
+            List<TSM.Assembly> assemblies,
+            List<TSM.Part> modelPartsInView,
+            string assemblyInput
+        ) {
             if (assemblies == null || assemblies.Count == 0) return null;
             if (string.IsNullOrWhiteSpace(assemblyInput)) return null;
 
@@ -204,27 +254,30 @@ namespace HFT_DrawingHelper {
                 if (!(assembly.GetMainPart() is TSM.Part mainPart)) continue;
 
                 var assemblyPosition = string.Empty;
-                var partName = mainPart.Name ?? string.Empty;
+                var mainPartName = mainPart.Name ?? string.Empty;
 
                 try {
                     mainPart.GetReportProperty("ASSEMBLY_POS", ref assemblyPosition);
                 }
                 catch {
-                    // ignroed
+                    // ignored
                 }
 
-                if (string.Equals(assemblyPosition, normalizedInput, StringComparison.OrdinalIgnoreCase))
+                if (assemblyPosition.IndexOf(normalizedInput, StringComparison.OrdinalIgnoreCase) >= 0)
                     return assembly;
 
-                if (string.Equals(partName, normalizedInput, StringComparison.OrdinalIgnoreCase))
+                if (mainPartName.IndexOf(normalizedInput, StringComparison.OrdinalIgnoreCase) >= 0)
                     return assembly;
             }
 
-            return null;
+            return (from assembly in assemblies
+                let visibleParts = GetAssemblyPartsVisibleInView(assembly, modelPartsInView)
+                where visibleParts.Select(part => part.Name ?? string.Empty).Any(partName =>
+                    partName.IndexOf(normalizedInput, StringComparison.OrdinalIgnoreCase) >= 0)
+                select assembly).FirstOrDefault();
         }
 
         #endregion
-
 
         #region Assembly Parts
 
@@ -283,199 +336,42 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
-
-        #region Geometry Extraction
-
-        private static AssemblyViewBounds GetAssemblyBoundsInView(
-            TSD.View selectedView,
-            List<TSM.Part> assemblyParts
-        ) {
-            if (selectedView == null || assemblyParts == null || assemblyParts.Count == 0) return null;
-
-            var model = new TSM.Model();
-            var workPlaneHandler = model.GetWorkPlaneHandler();
-            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
-
-            try {
-                workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem)
-                );
-
-                var allPoints = new List<TSG.Point>();
-
-                foreach (var part in assemblyParts.Where(part => part != null)) {
-                    TSM.Solid solid;
-
-                    try {
-                        solid = part.GetSolid();
-                    }
-                    catch {
-                        continue;
-                    }
-
-                    if (solid == null) continue;
-
-                    var min = solid.MinimumPoint;
-                    var max = solid.MaximumPoint;
-
-                    allPoints.Add(new TSG.Point(min.X, min.Y, 0));
-                    allPoints.Add(new TSG.Point(max.X, min.Y, 0));
-                    allPoints.Add(new TSG.Point(max.X, max.Y, 0));
-                    allPoints.Add(new TSG.Point(min.X, max.Y, 0));
-                }
-
-                if (allPoints.Count == 0) return null;
-
-                return new AssemblyViewBounds {
-                    MinX = allPoints.Min(p => p.X),
-                    MaxX = allPoints.Max(p => p.X),
-                    MinY = allPoints.Min(p => p.Y),
-                    MaxY = allPoints.Max(p => p.Y)
-                };
-            }
-            finally {
-                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
-            }
-        }
-
-        private static List<double> GetDistinctBoundaryCoordinates(
-            TSD.View selectedView,
-            List<TSM.Part> assemblyParts,
-            double min,
-            double max,
-            bool useXAxis
-        ) {
-            var result = new List<double>();
-
-            var model = new TSM.Model();
-            var workPlaneHandler = model.GetWorkPlaneHandler();
-            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
-
-            try {
-                workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem)
-                );
-
-                foreach (var part in assemblyParts.Where(part => part != null)) {
-                    TSM.Solid solid;
-
-                    try {
-                        solid = part.GetSolid();
-                    }
-                    catch {
-                        continue;
-                    }
-
-                    if (solid == null) continue;
-
-                    if (useXAxis) {
-                        result.Add(solid.MinimumPoint.X);
-                        result.Add(solid.MaximumPoint.X);
-                    }
-                    else {
-                        result.Add(solid.MinimumPoint.Y);
-                        result.Add(solid.MaximumPoint.Y);
-                    }
-                }
-            }
-            finally {
-                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
-            }
-
-            result.Add(min);
-            result.Add(max);
-
-            return MergeCloseCoordinates(result, CoordinateToleranceMillimeters);
-        }
-
-        private static List<double> MergeCloseCoordinates(List<double> coordinates, double tolerance) {
-            if (coordinates == null || coordinates.Count == 0) return new List<double>();
-
-            var ordered = coordinates.OrderBy(x => x).ToList();
-            var result = new List<double> { ordered[0] };
-
-            for (var i = 1; i < ordered.Count; i++)
-                if (Math.Abs(ordered[i] - result.Last()) > tolerance)
-                    result.Add(ordered[i]);
-
-            return result;
-        }
-
-        #endregion
-
-
         #region Dimension Set Builders
-
-        private static void CreateHorizontalChainDimensionSet(
-            TSD.StraightDimensionSetHandler handler,
-            TSD.View view,
-            List<double> xs,
-            double y,
-            double offset
-        ) {
-            if (xs == null || xs.Count < 2) return;
-            if (xs.Last() - xs.First() < MinimumDimensionSpanMillimeters) return;
-
-            var points = new TSD.PointList();
-
-            foreach (var x in xs)
-                points.Add(new TSG.Point(x, y, 0));
-
-            handler.CreateDimensionSet(view, points, new TSG.Vector(0, 1, 0), offset);
-        }
 
         private static void CreateHorizontalOverallDimensionSet(
             TSD.StraightDimensionSetHandler handler,
             TSD.View view,
-            double minX,
-            double maxX,
-            double y,
-            double offset
+            TSG.Point startPoint,
+            TSG.Point endPoint,
+            double offset,
+            TSG.Vector directionVector
         ) {
-            if (maxX - minX < MinimumDimensionSpanMillimeters) return;
+            if (Math.Abs(endPoint.X - startPoint.X) < MinimumDimensionSpanMillimeters) return;
 
             var points = new TSD.PointList {
-                new TSG.Point(minX, y, 0),
-                new TSG.Point(maxX, y, 0)
+                startPoint,
+                endPoint
             };
 
-            handler.CreateDimensionSet(view, points, new TSG.Vector(0, 1, 0), offset);
-        }
-
-        private static void CreateVerticalChainDimensionSet(
-            TSD.StraightDimensionSetHandler handler,
-            TSD.View view,
-            List<double> ys,
-            double x,
-            double offset
-        ) {
-            if (ys == null || ys.Count < 2) return;
-            if (ys.Last() - ys.First() < MinimumDimensionSpanMillimeters) return;
-
-            var points = new TSD.PointList();
-
-            foreach (var y in ys)
-                points.Add(new TSG.Point(x, y, 0));
-
-            handler.CreateDimensionSet(view, points, new TSG.Vector(1, 0, 0), offset);
+            handler.CreateDimensionSet(view, points, directionVector, offset);
         }
 
         private static void CreateVerticalOverallDimensionSet(
             TSD.StraightDimensionSetHandler handler,
             TSD.View view,
-            double minY,
-            double maxY,
-            double x,
-            double offset
+            TSG.Point startPoint,
+            TSG.Point endPoint,
+            double offset,
+            TSG.Vector directionVector
         ) {
-            if (maxY - minY < MinimumDimensionSpanMillimeters) return;
+            if (Math.Abs(endPoint.Y - startPoint.Y) < MinimumDimensionSpanMillimeters) return;
 
             var points = new TSD.PointList {
-                new TSG.Point(x, minY, 0),
-                new TSG.Point(x, maxY, 0)
+                startPoint,
+                endPoint
             };
 
-            handler.CreateDimensionSet(view, points, new TSG.Vector(1, 0, 0), offset);
+            handler.CreateDimensionSet(view, points, directionVector, offset);
         }
 
         #endregion

@@ -76,7 +76,7 @@
 
                             <!-- watermark -->
                             <TextBlock x:Name="Watermark"
-                                       Text="???"
+                                       Text="Wpisz Name lub ASSEMBLY_POS"
                                        Foreground="Gray"
                                        Margin="{TemplateBinding Padding}"
                                        VerticalAlignment="Center"
@@ -166,4 +166,4 @@
                 Margin="350,105,0,0"
                 Click="AddDimensionsButton_Click" />
     </Grid>
-</Window>   
+</Window>

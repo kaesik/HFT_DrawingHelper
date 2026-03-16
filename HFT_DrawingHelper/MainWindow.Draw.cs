@@ -2,17 +2,27 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
-using TS = Tekla.Structures;
 using TSM = Tekla.Structures.Model;
 using TSG = Tekla.Structures.Geometry3d;
 using TSD = Tekla.Structures.Drawing;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
-        #region Constants
+        #region View And Model Helpers
 
-        private const string ViewAttributeName = "#HFT_Kant_Section";
-        private const string MarkAttributeName = "#HFT_SECTION_V";
+        private static TPart FindFirstPart<TPart>(List<TSM.Part> parts) where TPart : TSM.Part {
+            if (parts == null || parts.Count == 0) return null;
+
+            foreach (var part in parts)
+                if (part is TPart typedPart)
+                    return typedPart;
+
+            return null;
+        }
+
+        #endregion
+
+        #region Constants
 
         private const double ZStepMillimeters = 0.5;
         private const int MaximumEmptyStepsPerDirection = 80;
@@ -928,86 +938,6 @@ namespace HFT_DrawingHelper {
                 averageY + normalY * offsetMillimeters,
                 0
             );
-        }
-
-        #endregion
-
-        #region View And Model Helpers
-
-        private static TSD.View GetSelectedViewOrShowMessage(TSD.DrawingHandler drawingHandler) {
-            var selector = drawingHandler.GetDrawingObjectSelector();
-            var selected = selector.GetSelected();
-
-            if (selected == null) {
-                MessageBox.Show("Nie zaznaczono żadnego obiektu.");
-                return null;
-            }
-
-            TSD.View selectedView = null;
-
-            selected.SelectInstances = false;
-            while (selected.MoveNext()) {
-                selectedView = selected.Current as TSD.View;
-                if (selectedView != null) break;
-            }
-
-            if (selectedView == null) {
-                MessageBox.Show("Zaznacz widok na rysunku, a potem uruchom funkcję.");
-                return null;
-            }
-
-            return selectedView;
-        }
-
-        private static List<TSM.Part> GetModelPartsFromDrawingView(TSD.View drawingView) {
-            var modelParts = new List<TSM.Part>();
-            var addedModelIdentifiers = new HashSet<string>();
-
-            var model = new TSM.Model();
-            var drawingObjectEnumerator = drawingView.GetAllObjects();
-            if (drawingObjectEnumerator == null) return modelParts;
-
-            drawingObjectEnumerator.SelectInstances = true;
-
-            while (drawingObjectEnumerator.MoveNext()) {
-                if (!(drawingObjectEnumerator.Current is TSD.DrawingObject drawingObject)) continue;
-
-                object modelIdentifierObject;
-
-                try {
-                    modelIdentifierObject = ((dynamic)drawingObject).ModelIdentifier;
-                }
-                catch {
-                    continue;
-                }
-
-                if (modelIdentifierObject == null) continue;
-
-                var identifierString = modelIdentifierObject.ToString();
-                if (addedModelIdentifiers.Contains(identifierString)) continue;
-
-                try {
-                    var modelObject = model.SelectModelObject((TS.Identifier)modelIdentifierObject);
-                    if (!(modelObject is TSM.Part modelPart)) continue;
-
-                    addedModelIdentifiers.Add(identifierString);
-                    modelParts.Add(modelPart);
-                }
-                catch {
-                }
-            }
-
-            return modelParts;
-        }
-
-        private static TPart FindFirstPart<TPart>(List<TSM.Part> parts) where TPart : TSM.Part {
-            if (parts == null || parts.Count == 0) return null;
-
-            foreach (var part in parts)
-                if (part is TPart typedPart)
-                    return typedPart;
-
-            return null;
         }
 
         #endregion

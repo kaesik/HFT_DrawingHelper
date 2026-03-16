@@ -205,6 +205,13 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
+        #region Constants
+
+        private const string ViewAttributeName = "#HFT_Kant_Section";
+        private const string MarkAttributeName = "#HFT_SECTION_V";
+
+        #endregion
+
         #region Section Constants
 
         private const double DepthUp = 1.0;

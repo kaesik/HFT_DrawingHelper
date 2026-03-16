@@ -38,13 +38,14 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
-            var bounds = GetAssemblyBoundsInView(selectedView, assemblyParts);
+            var bounds = GetBoundsFromParts(selectedView, assemblyParts);
             if (bounds == null) {
                 MessageBox.Show("Nie udało się wyznaczyć obrysu całego elementu.");
                 return;
             }
 
             CreateAssemblyDimensionSets(selectedView, bounds);
+            DrawPartFramesAndNames(selectedView, assemblyParts, bounds);
             drawing.CommitChanges();
         }
 
@@ -57,8 +58,10 @@ namespace HFT_DrawingHelper {
             AssemblyViewBounds bounds
         ) {
             var handler = new TSD.StraightDimensionSetHandler();
+
             var assemblyWidth = bounds.MaxX - bounds.MinX;
             var assemblyHeight = bounds.MaxY - bounds.MinY;
+
             var halfAssemblyWidth = assemblyWidth / 2.0;
             var halfAssemblyHeight = assemblyHeight / 2.0;
 
@@ -69,7 +72,7 @@ namespace HFT_DrawingHelper {
                     new TSG.Point(-halfAssemblyWidth, -halfAssemblyHeight, 0),
                     new TSG.Point(halfAssemblyWidth, -halfAssemblyHeight, 0),
                     OverallDimensionOffsetMillimeters,
-                    new TSG.Vector(0.0, 0.0, 0.0)
+                    new TSG.Vector(0.0, -1.0, 0.0)
                 );
 
             if (assemblyHeight >= MinimumDimensionSpanMillimeters)
@@ -79,32 +82,37 @@ namespace HFT_DrawingHelper {
                     new TSG.Point(-halfAssemblyWidth, -halfAssemblyHeight, 0),
                     new TSG.Point(-halfAssemblyWidth, halfAssemblyHeight, 0),
                     OverallDimensionOffsetMillimeters,
-                    new TSG.Vector(0.0, 0.0, 0.0)
+                    new TSG.Vector(-1.0, 0.0, 0.0)
                 );
         }
 
         #endregion
 
-        #region Geometry Extraction
-
-        private static AssemblyViewBounds GetAssemblyBoundsInView(
+        private static AssemblyViewBounds GetBoundsFromParts(
             TSD.View selectedView,
-            List<TSM.Part> assemblyParts
+            List<TSM.Part> parts
         ) {
-            if (selectedView == null || assemblyParts == null || assemblyParts.Count == 0) return null;
+            if (selectedView == null || parts == null || parts.Count == 0) return null;
 
             var model = new TSM.Model();
             var workPlaneHandler = model.GetWorkPlaneHandler();
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
 
             try {
-                workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem)
-                );
+                workPlaneHandler.SetCurrentTransformationPlane(new TSM.TransformationPlane());
 
-                var allPoints = new List<TSG.Point>();
+                var displayCoordinateSystem = selectedView.DisplayCoordinateSystem;
+                var origin = displayCoordinateSystem.Origin;
+                var axisX = NormalizeVector(displayCoordinateSystem.AxisX);
+                var axisY = NormalizeVector(displayCoordinateSystem.AxisY);
 
-                foreach (var part in assemblyParts.Where(part => part != null)) {
+                var minimumX = double.MaxValue;
+                var minimumY = double.MaxValue;
+                var maximumX = double.MinValue;
+                var maximumY = double.MinValue;
+                var foundAnyPoint = false;
+
+                foreach (var part in parts.Where(part => part != null)) {
                     TSM.Solid solid;
 
                     try {
@@ -114,24 +122,31 @@ namespace HFT_DrawingHelper {
                         continue;
                     }
 
-                    if (solid == null) continue;
+                    var edgeEnumerator = solid?.GetEdgeEnumerator();
+                    if (edgeEnumerator == null) continue;
 
-                    var min = solid.MinimumPoint;
-                    var max = solid.MaximumPoint;
+                    while (edgeEnumerator.MoveNext()) {
+                        dynamic edge = edgeEnumerator.Current;
+                        if (edge == null) continue;
 
-                    allPoints.Add(new TSG.Point(min.X, min.Y, 0));
-                    allPoints.Add(new TSG.Point(max.X, min.Y, 0));
-                    allPoints.Add(new TSG.Point(max.X, max.Y, 0));
-                    allPoints.Add(new TSG.Point(min.X, max.Y, 0));
+                        if (!TryGetEdgePoints(edge, out TSG.Point startPoint, out TSG.Point endPoint)) continue;
+
+                        var projectedStartPoint = ProjectPointToViewPlane(startPoint, origin, axisX, axisY);
+                        var projectedEndPoint = ProjectPointToViewPlane(endPoint, origin, axisX, axisY);
+
+                        UpdateBounds(projectedStartPoint, ref minimumX, ref minimumY, ref maximumX, ref maximumY);
+                        UpdateBounds(projectedEndPoint, ref minimumX, ref minimumY, ref maximumX, ref maximumY);
+                        foundAnyPoint = true;
+                    }
                 }
 
-                if (allPoints.Count == 0) return null;
+                if (!foundAnyPoint) return null;
 
                 return new AssemblyViewBounds {
-                    MinX = allPoints.Min(point => point.X),
-                    MaxX = allPoints.Max(point => point.X),
-                    MinY = allPoints.Min(point => point.Y),
-                    MaxY = allPoints.Max(point => point.Y)
+                    MinX = minimumX,
+                    MaxX = maximumX,
+                    MinY = minimumY,
+                    MaxY = maximumY
                 };
             }
             finally {
@@ -139,7 +154,40 @@ namespace HFT_DrawingHelper {
             }
         }
 
-        #endregion
+        private static TSG.Point ProjectPointToViewPlane(
+            TSG.Point point,
+            TSG.Point origin,
+            TSG.Vector axisX,
+            TSG.Vector axisY
+        ) {
+            var vectorFromOrigin = new TSG.Vector(
+                point.X - origin.X,
+                point.Y - origin.Y,
+                point.Z - origin.Z
+            );
+
+            var projectedX = Dot(vectorFromOrigin, axisX);
+            var projectedY = Dot(vectorFromOrigin, axisY);
+
+            return new TSG.Point(projectedX, projectedY, 0);
+        }
+
+        private static TSG.Vector NormalizeVector(TSG.Vector vector) {
+            var length = Math.Sqrt(vector.X * vector.X + vector.Y * vector.Y + vector.Z * vector.Z);
+            if (length < 0.000001) return new TSG.Vector(0, 0, 0);
+
+            return new TSG.Vector(
+                vector.X / length,
+                vector.Y / length,
+                vector.Z / length
+            );
+        }
+
+        private static double Dot(TSG.Vector firstVector, TSG.Vector secondVector) {
+            return firstVector.X * secondVector.X +
+                   firstVector.Y * secondVector.Y +
+                   firstVector.Z * secondVector.Z;
+        }
 
         #region Data Structures
 
@@ -152,10 +200,184 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
+        #region Part Name Drawing
+
+        private static void DrawPartFramesAndNames(
+            TSD.View selectedView,
+            List<TSM.Part> parts,
+            AssemblyViewBounds assemblyBounds
+        ) {
+            if (selectedView == null || parts == null || parts.Count == 0 || assemblyBounds == null) return;
+
+            var lineAttributes = new TSD.Line.LineAttributes {
+                Line = new TSD.LineTypeAttributes(TSD.LineTypes.SolidLine, TSD.DrawingColors.Red)
+            };
+
+            var assemblyCenterX = (assemblyBounds.MinX + assemblyBounds.MaxX) / 2.0;
+            var assemblyCenterY = (assemblyBounds.MinY + assemblyBounds.MaxY) / 2.0;
+
+            foreach (var part in parts.Where(part => part != null)) {
+                var rawBounds = GetPartBoundsInView(selectedView, part);
+                if (rawBounds == null) continue;
+
+                var shiftedBounds = ShiftBoundsToAssemblyCenter(rawBounds, assemblyCenterX, assemblyCenterY);
+
+                DrawRectangleForBounds(selectedView, shiftedBounds, lineAttributes);
+
+                var centerX = (shiftedBounds.MinX + shiftedBounds.MaxX) / 2.0;
+                var centerY = (shiftedBounds.MinY + shiftedBounds.MaxY) / 2.0;
+                var partName = string.IsNullOrWhiteSpace(part.Name) ? "Unnamed Part" : part.Name;
+
+                var text = new TSD.Text(selectedView, new TSG.Point(centerX, centerY, 0), partName);
+                text.Insert();
+            }
+        }
+
+        private static AssemblyViewBounds GetPartBoundsInView(TSD.View selectedView, TSM.Part part) {
+            if (selectedView == null || part == null) return null;
+
+            var model = new TSM.Model();
+            var workPlaneHandler = model.GetWorkPlaneHandler();
+            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
+
+            try {
+                workPlaneHandler.SetCurrentTransformationPlane(new TSM.TransformationPlane());
+
+                TSM.Solid solid;
+
+                try {
+                    solid = part.GetSolid();
+                }
+                catch {
+                    return null;
+                }
+
+                var edgeEnumerator = solid?.GetEdgeEnumerator();
+                if (edgeEnumerator == null) return null;
+
+                var displayCoordinateSystem = selectedView.DisplayCoordinateSystem;
+                var origin = displayCoordinateSystem.Origin;
+                var axisX = NormalizeVector(displayCoordinateSystem.AxisX);
+                var axisY = NormalizeVector(displayCoordinateSystem.AxisY);
+
+                var minimumX = double.MaxValue;
+                var minimumY = double.MaxValue;
+                var maximumX = double.MinValue;
+                var maximumY = double.MinValue;
+                var foundAnyPoint = false;
+
+                while (edgeEnumerator.MoveNext()) {
+                    dynamic edge = edgeEnumerator.Current;
+                    if (edge == null) continue;
+
+                    if (!TryGetEdgePoints(edge, out TSG.Point startPoint, out TSG.Point endPoint)) continue;
+
+                    var projectedStartPoint = ProjectPointToViewPlane(startPoint, origin, axisX, axisY);
+                    var projectedEndPoint = ProjectPointToViewPlane(endPoint, origin, axisX, axisY);
+
+                    UpdateBounds(projectedStartPoint, ref minimumX, ref minimumY, ref maximumX, ref maximumY);
+                    UpdateBounds(projectedEndPoint, ref minimumX, ref minimumY, ref maximumX, ref maximumY);
+                    foundAnyPoint = true;
+                }
+
+                if (!foundAnyPoint) return null;
+
+                return new AssemblyViewBounds {
+                    MinX = minimumX,
+                    MaxX = maximumX,
+                    MinY = minimumY,
+                    MaxY = maximumY
+                };
+            }
+            finally {
+                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
+            }
+        }
+
+        private static AssemblyViewBounds ShiftBoundsToAssemblyCenter(
+            AssemblyViewBounds bounds,
+            double assemblyCenterX,
+            double assemblyCenterY
+        ) {
+            if (bounds == null) return null;
+
+            return new AssemblyViewBounds {
+                MinX = bounds.MinX - assemblyCenterX,
+                MaxX = bounds.MaxX - assemblyCenterX,
+                MinY = bounds.MinY - assemblyCenterY,
+                MaxY = bounds.MaxY - assemblyCenterY
+            };
+        }
+
+        private static void DrawRectangleForBounds(
+            TSD.View selectedView,
+            AssemblyViewBounds bounds,
+            TSD.Line.LineAttributes lineAttributes
+        ) {
+            if (selectedView == null || bounds == null) return;
+
+            var bottomLeft = new TSG.Point(bounds.MinX, bounds.MinY, 0);
+            var bottomRight = new TSG.Point(bounds.MaxX, bounds.MinY, 0);
+            var topRight = new TSG.Point(bounds.MaxX, bounds.MaxY, 0);
+            var topLeft = new TSG.Point(bounds.MinX, bounds.MaxY, 0);
+
+            new TSD.Line(selectedView, bottomLeft, bottomRight, lineAttributes).Insert();
+            new TSD.Line(selectedView, bottomRight, topRight, lineAttributes).Insert();
+            new TSD.Line(selectedView, topRight, topLeft, lineAttributes).Insert();
+            new TSD.Line(selectedView, topLeft, bottomLeft, lineAttributes).Insert();
+        }
+
+        #endregion
+
+        #region Geometry Extraction
+
+        private static bool TryGetEdgePoints(
+            dynamic edge,
+            out TSG.Point startPoint,
+            out TSG.Point endPoint
+        ) {
+            startPoint = null;
+            endPoint = null;
+
+            try {
+                startPoint = edge.StartPoint as TSG.Point;
+                endPoint = edge.EndPoint as TSG.Point;
+
+                if (startPoint != null && endPoint != null) return true;
+            }
+            catch {
+            }
+
+            try {
+                startPoint = edge.Point1 as TSG.Point;
+                endPoint = edge.Point2 as TSG.Point;
+
+                if (startPoint != null && endPoint != null) return true;
+            }
+            catch {
+            }
+
+            return false;
+        }
+
+        private static void UpdateBounds(
+            TSG.Point point,
+            ref double minimumX,
+            ref double minimumY,
+            ref double maximumX,
+            ref double maximumY
+        ) {
+            if (point.X < minimumX) minimumX = point.X;
+            if (point.Y < minimumY) minimumY = point.Y;
+            if (point.X > maximumX) maximumX = point.X;
+            if (point.Y > maximumY) maximumY = point.Y;
+        }
+
+        #endregion
+
         #region Dimension Constants
 
         private const double OverallDimensionOffsetMillimeters = 20.0;
-        private const double CoordinateToleranceMillimeters = 1.0;
         private const double MinimumDimensionSpanMillimeters = 1.0;
 
         #endregion
@@ -208,7 +430,6 @@ namespace HFT_DrawingHelper {
                     if (assembly != null) return assembly;
                 }
                 catch {
-                    // ignored
                 }
             }
 
@@ -260,7 +481,6 @@ namespace HFT_DrawingHelper {
                     mainPart.GetReportProperty("ASSEMBLY_POS", ref assemblyPosition);
                 }
                 catch {
-                    // ignored
                 }
 
                 if (assemblyPosition.IndexOf(normalizedInput, StringComparison.OrdinalIgnoreCase) >= 0)

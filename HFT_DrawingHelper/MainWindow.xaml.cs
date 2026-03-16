@@ -28,7 +28,7 @@ namespace HFT_DrawingHelper {
         }
 
         private void AddDimensionsButton_Click(object sender, RoutedEventArgs e) {
-            AddDimensions(ElementsToDimensionTextBox.Text.Trim());
+            AddDimensions();
         }
 
         #region Helpers

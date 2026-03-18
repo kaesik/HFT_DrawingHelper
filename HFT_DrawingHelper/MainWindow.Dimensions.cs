@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using TSD = Tekla.Structures.Drawing;
@@ -111,9 +112,12 @@ namespace HFT_DrawingHelper {
 
             while (allObjects.MoveNext()) {
                 if (!(allObjects.Current is TSD.Part drawingPart)) continue;
+                if (drawingPart.Hideable != null && drawingPart.Hideable.IsHidden) continue;
 
                 var modelIdentifier = drawingPart.ModelIdentifier.ID;
                 if (!addedModelIdentifiers.Add(modelIdentifier)) continue;
+
+                if (!DoesPartIntersectViewDepth(drawingPart)) continue;
 
                 var bounds = GetBoundsFromDrawingPart(drawingPart);
                 if (bounds == null) continue;
@@ -125,6 +129,72 @@ namespace HFT_DrawingHelper {
             }
 
             return result;
+        }
+
+        private static bool DoesPartIntersectViewDepth(TSD.Part drawingPart) {
+            if (drawingPart == null) return false;
+
+            if (!(drawingPart.GetView() is TSD.View view)) return false;
+            if (view.RestrictionBox == null) return true;
+
+            var model = new TSM.Model();
+            var modelObject = model.SelectModelObject(drawingPart.ModelIdentifier);
+            if (!(modelObject is TSM.Part modelPart)) return false;
+
+            var workPlaneHandler = model.GetWorkPlaneHandler();
+            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
+
+            try {
+                workPlaneHandler.SetCurrentTransformationPlane(
+                    new TSM.TransformationPlane(view.DisplayCoordinateSystem)
+                );
+
+                TSM.Solid solid;
+                try {
+                    solid = modelPart.GetSolid();
+                }
+                catch {
+                    return false;
+                }
+
+                var edgeEnumerator = solid?.GetEdgeEnumerator();
+                if (edgeEnumerator == null) return false;
+
+                var viewMinZ = Math.Min(view.RestrictionBox.MinPoint.Z, view.RestrictionBox.MaxPoint.Z);
+                var viewMaxZ = Math.Max(view.RestrictionBox.MinPoint.Z, view.RestrictionBox.MaxPoint.Z);
+
+                const double tolerance = 1.0;
+
+                while (edgeEnumerator.MoveNext()) {
+                    dynamic edge = edgeEnumerator.Current;
+                    if (edge == null) continue;
+
+                    if (!TryGetEdgePoints(edge, out TSG.Point startPoint, out TSG.Point endPoint)) continue;
+                    if (startPoint == null || endPoint == null) continue;
+
+                    if (DoesSegmentIntersectDepthRange(startPoint.Z, endPoint.Z, viewMinZ, viewMaxZ, tolerance))
+                        return true;
+                }
+
+                return false;
+            }
+            finally {
+                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
+            }
+        }
+
+        private static bool DoesSegmentIntersectDepthRange(
+            double startZ,
+            double endZ,
+            double rangeMinZ,
+            double rangeMaxZ,
+            double tolerance
+        ) {
+            var segmentMinZ = Math.Min(startZ, endZ);
+            var segmentMaxZ = Math.Max(startZ, endZ);
+
+            return segmentMaxZ >= rangeMinZ - tolerance &&
+                   segmentMinZ <= rangeMaxZ + tolerance;
         }
 
         private static PartBounds GetBoundsFromDrawingPart(TSD.Part drawingPart) {
@@ -308,6 +378,8 @@ namespace HFT_DrawingHelper {
             ref double maximumX,
             ref double maximumY
         ) {
+            if (point == null) return;
+
             if (point.X < minimumX) minimumX = point.X;
             if (point.Y < minimumY) minimumY = point.Y;
             if (point.X > maximumX) maximumX = point.X;

@@ -8,106 +8,38 @@ using TSG = Tekla.Structures.Geometry3d;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
-        #region Main Dimension Flow
+        #region Constants
 
-        private static void AddDimensions() {
-            var drawingHandler = new TSD.DrawingHandler();
-            if (!drawingHandler.GetConnectionStatus()) return;
-
-            var drawing = drawingHandler.GetActiveDrawing();
-            if (drawing == null) return;
-
-            var selectedParts = GetSelectedDrawingParts(drawingHandler);
-            if (selectedParts == null || selectedParts.Count == 0) {
-                MessageBox.Show("Nie zaznaczono żadnych elementów typu Part.");
-                return;
-            }
-
-            var selectedView = GetCommonViewFromSelectedParts(selectedParts);
-            if (selectedView == null) {
-                MessageBox.Show("Zaznaczone elementy muszą należeć do jednego widoku.");
-                return;
-            }
-
-            DrawPartFramesAndNames(selectedParts);
-
-            var allViewParts = GetDrawingPartsFromView(selectedView);
-            var allPartsBounds = GetAssemblyBounds(allViewParts);
-            if (allPartsBounds == null) {
-                MessageBox.Show("Nie udało się wyznaczyć obwiedni wszystkich elementów w widoku.");
-                return;
-            }
-
-            CreateOverallAssemblyDimensions(selectedView, allPartsBounds, selectedParts);
-            drawing.CommitChanges();
-        }
-
-        #endregion
-
-        #region Overall Dimensions
-
-        private static void CreateOverallAssemblyDimensions(
-            TSD.View selectedView,
-            PartBounds allPartsBounds,
-            List<DrawingPartWithBounds> selectedParts
-        ) {
-            if (selectedView == null || allPartsBounds == null) return;
-
-            var handler = new TSD.StraightDimensionSetHandler();
-
-            var xValues = selectedParts
-                .Where(p => p?.Bounds != null)
-                .SelectMany(p => new[] { p.Bounds.MinX, p.Bounds.MaxX })
-                .Append(allPartsBounds.MinX)
-                .Append(allPartsBounds.MaxX)
-                .GroupBy(x => Math.Round(x, 3))
-                .Select(g => g.First())
-                .OrderBy(x => x)
-                .ToList();
-
-            var yValues = selectedParts
-                .Where(p => p?.Bounds != null)
-                .SelectMany(p => new[] { p.Bounds.MinY, p.Bounds.MaxY })
-                .Append(allPartsBounds.MinY)
-                .Append(allPartsBounds.MaxY)
-                .GroupBy(y => Math.Round(y, 3))
-                .Select(g => g.First())
-                .OrderBy(y => y)
-                .ToList();
-
-            var width = allPartsBounds.MaxX - allPartsBounds.MinX;
-            var height = allPartsBounds.MaxY - allPartsBounds.MinY;
-
-            if (width >= MinimumDimensionSpanMillimeters && xValues.Count >= 2) {
-                var horizontalPoints = new TSD.PointList();
-                foreach (var x in xValues)
-                    horizontalPoints.Add(new TSG.Point(x, allPartsBounds.MinY, 0));
-
-                handler.CreateDimensionSet(
-                    selectedView,
-                    horizontalPoints,
-                    new TSG.Vector(0.0, -1.0, 0.0),
-                    OverallDimensionOffsetMillimeters
-                );
-            }
-
-            if (height >= MinimumDimensionSpanMillimeters && yValues.Count >= 2) {
-                var verticalPoints = new TSD.PointList();
-                foreach (var y in yValues)
-                    verticalPoints.Add(new TSG.Point(allPartsBounds.MinX, y, 0));
-
-                handler.CreateDimensionSet(
-                    selectedView,
-                    verticalPoints,
-                    new TSG.Vector(-1.0, 0.0, 0.0),
-                    OverallDimensionOffsetMillimeters
-                );
-            }
-        }
+        private const double OverallDimensionOffsetMillimeters = 20.0;
+        private const double MinimumDimensionSpanMillimeters = 1.0;
+        private const double CurvedDimensionArcDepthRatio = 0.15;
 
         #endregion
 
         #region Data Structures
+
+        private enum DimensionType {
+            Straight,
+            Curved
+        }
+
+        private enum HorizontalDimensionPlacement {
+            Below,
+            Above
+        }
+
+        private enum VerticalDimensionPlacement {
+            Left,
+            Right
+        }
+
+        private sealed class DimensionOptions {
+            public DimensionType DimensionType { get; set; }
+            public HorizontalDimensionPlacement HorizontalPlacement { get; set; }
+            public VerticalDimensionPlacement VerticalPlacement { get; set; }
+            public bool CreateHorizontal { get; set; }
+            public bool CreateVertical { get; set; }
+        }
 
         private sealed class DrawingPartWithBounds {
             public TSD.Part DrawingPart { get; set; }
@@ -123,87 +55,287 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
-        #region Drawing Parts
+        #region Main Dimension Flow
 
-        private static List<DrawingPartWithBounds> GetSelectedDrawingParts(TSD.DrawingHandler drawingHandler) {
-            var result = new List<DrawingPartWithBounds>();
-            if (drawingHandler == null) return result;
+        private static void AddDimensions(DimensionOptions options) {
+            var drawingHandler = new TSD.DrawingHandler();
+            if (!drawingHandler.GetConnectionStatus()) return;
 
-            var selector = drawingHandler.GetDrawingObjectSelector();
-            if (selector == null) return result;
+            var activeDrawing = drawingHandler.GetActiveDrawing();
+            if (activeDrawing == null) return;
 
-            var selectedObjects = selector.GetSelected();
-            if (selectedObjects == null) return result;
+            var selectedParts = GetSelectedDrawingParts(drawingHandler);
 
-            selectedObjects.SelectInstances = true;
-
-            var addedModelIdentifiers = new HashSet<int>();
-
-            while (selectedObjects.MoveNext()) {
-                if (!(selectedObjects.Current is TSD.Part drawingPart)) continue;
-                if (drawingPart.Hideable != null && drawingPart.Hideable.IsHidden) continue;
-
-                var modelIdentifier = drawingPart.ModelIdentifier.ID;
-                if (!addedModelIdentifiers.Add(modelIdentifier)) continue;
-
-                var bounds = GetBoundsFromDrawingPart(drawingPart);
-                if (bounds == null) continue;
-
-                result.Add(new DrawingPartWithBounds {
-                    DrawingPart = drawingPart,
-                    Bounds = bounds
-                });
+            if (selectedParts == null || selectedParts.Count == 0) {
+                AddDimensionsFromSelectedView(drawingHandler, activeDrawing, options);
+                return;
             }
 
-            return result;
+            AddDimensionsFromSelectedParts(activeDrawing, selectedParts, options);
         }
 
-        private static List<DrawingPartWithBounds> GetDrawingPartsFromView(TSD.View selectedView) {
-            var result = new List<DrawingPartWithBounds>();
-            if (selectedView == null) return result;
+        private static void AddDimensionsFromSelectedView(
+            TSD.DrawingHandler drawingHandler,
+            TSD.Drawing activeDrawing,
+            DimensionOptions options
+        ) {
+            var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
+            if (selectedView == null) return;
 
-            var allObjects = selectedView.GetAllObjects(typeof(TSD.Part));
-            if (allObjects == null) return result;
-
-            allObjects.SelectInstances = true;
-
-            var addedModelIdentifiers = new HashSet<int>();
-
-            while (allObjects.MoveNext()) {
-                if (!(allObjects.Current is TSD.Part drawingPart)) continue;
-                if (drawingPart.Hideable != null && drawingPart.Hideable.IsHidden) continue;
-
-                var modelIdentifier = drawingPart.ModelIdentifier.ID;
-                if (!addedModelIdentifiers.Add(modelIdentifier)) continue;
-
-                if (!DoesPartIntersectViewDepth(drawingPart)) continue;
-
-                var bounds = GetBoundsFromDrawingPart(drawingPart);
-                if (bounds == null) continue;
-
-                result.Add(new DrawingPartWithBounds {
-                    DrawingPart = drawingPart,
-                    Bounds = bounds
-                });
+            var allViewParts = GetDrawingPartsFromView(selectedView);
+            var allPartsBounds = GetAssemblyBounds(allViewParts);
+            if (allPartsBounds == null) {
+                MessageBox.Show("Nie udało się wyznaczyć obwiedni elementów w widoku.");
+                return;
             }
 
-            return result;
+            CreateMaximumAssemblyDimensions(selectedView, allPartsBounds, options);
+            activeDrawing.CommitChanges();
+        }
+
+        private static void AddDimensionsFromSelectedParts(
+            TSD.Drawing activeDrawing,
+            List<DrawingPartWithBounds> selectedParts,
+            DimensionOptions options
+        ) {
+            var selectedView = GetCommonViewFromSelectedParts(selectedParts);
+            if (selectedView == null) {
+                MessageBox.Show("Zaznaczone elementy muszą należeć do jednego widoku.");
+                return;
+            }
+
+            DrawPartFramesAndNames(selectedParts);
+
+            var allViewParts = GetDrawingPartsFromView(selectedView);
+            var allPartsBounds = GetAssemblyBounds(allViewParts);
+            if (allPartsBounds == null) {
+                MessageBox.Show("Nie udało się wyznaczyć obwiedni wszystkich elementów w widoku.");
+                return;
+            }
+
+            CreateOverallAssemblyDimensions(selectedView, allPartsBounds, selectedParts, options);
+            activeDrawing.CommitChanges();
+        }
+
+        #endregion
+
+        #region Dimension Creation
+
+        private static void CreateMaximumAssemblyDimensions(
+            TSD.View selectedView,
+            PartBounds allPartsBounds,
+            DimensionOptions options
+        ) {
+            if (selectedView == null || allPartsBounds == null) return;
+
+            var totalWidth = allPartsBounds.MaxX - allPartsBounds.MinX;
+            var totalHeight = allPartsBounds.MaxY - allPartsBounds.MinY;
+
+            if (options.CreateHorizontal && totalWidth >= MinimumDimensionSpanMillimeters) {
+                var anchorY = options.HorizontalPlacement == HorizontalDimensionPlacement.Above
+                    ? allPartsBounds.MaxY
+                    : allPartsBounds.MinY;
+
+                var horizontalPoints = new TSD.PointList {
+                    new TSG.Point(allPartsBounds.MinX, anchorY, 0),
+                    new TSG.Point(allPartsBounds.MaxX, anchorY, 0)
+                };
+
+                CreateDimensionSet(
+                    selectedView,
+                    horizontalPoints,
+                    GetHorizontalDirectionVector(options.HorizontalPlacement),
+                    OverallDimensionOffsetMillimeters,
+                    options.DimensionType
+                );
+            }
+
+            if (options.CreateVertical && totalHeight >= MinimumDimensionSpanMillimeters) {
+                var anchorX = options.VerticalPlacement == VerticalDimensionPlacement.Right
+                    ? allPartsBounds.MaxX
+                    : allPartsBounds.MinX;
+
+                var verticalPoints = new TSD.PointList {
+                    new TSG.Point(anchorX, allPartsBounds.MinY, 0),
+                    new TSG.Point(anchorX, allPartsBounds.MaxY, 0)
+                };
+
+                CreateDimensionSet(
+                    selectedView,
+                    verticalPoints,
+                    GetVerticalDirectionVector(options.VerticalPlacement),
+                    OverallDimensionOffsetMillimeters,
+                    options.DimensionType
+                );
+            }
+        }
+
+        private static void CreateOverallAssemblyDimensions(
+            TSD.View selectedView,
+            PartBounds allPartsBounds,
+            List<DrawingPartWithBounds> selectedParts,
+            DimensionOptions options
+        ) {
+            if (selectedView == null || allPartsBounds == null) return;
+
+            var selectedBounds = GetAssemblyBounds(selectedParts);
+            if (selectedBounds == null) return;
+
+            var xCoordinates = selectedParts
+                .Where(partWithBounds => partWithBounds?.Bounds != null)
+                .SelectMany(partWithBounds => new[] { partWithBounds.Bounds.MinX, partWithBounds.Bounds.MaxX })
+                .Append(allPartsBounds.MinX)
+                .Append(allPartsBounds.MaxX)
+                .GroupBy(xCoordinate => Math.Round(xCoordinate, 3))
+                .Select(coordinateGroup => coordinateGroup.First())
+                .OrderBy(xCoordinate => xCoordinate)
+                .ToList();
+
+            var yCoordinates = selectedParts
+                .Where(partWithBounds => partWithBounds?.Bounds != null)
+                .SelectMany(partWithBounds => new[] { partWithBounds.Bounds.MinY, partWithBounds.Bounds.MaxY })
+                .Append(allPartsBounds.MinY)
+                .Append(allPartsBounds.MaxY)
+                .GroupBy(yCoordinate => Math.Round(yCoordinate, 3))
+                .Select(coordinateGroup => coordinateGroup.First())
+                .OrderBy(yCoordinate => yCoordinate)
+                .ToList();
+
+            var totalWidth = allPartsBounds.MaxX - allPartsBounds.MinX;
+            var totalHeight = allPartsBounds.MaxY - allPartsBounds.MinY;
+
+            if (options.CreateHorizontal && totalWidth >= MinimumDimensionSpanMillimeters && xCoordinates.Count >= 2) {
+                var anchorY = options.HorizontalPlacement == HorizontalDimensionPlacement.Above
+                    ? selectedBounds.MaxY
+                    : selectedBounds.MinY;
+
+                var horizontalPoints = new TSD.PointList();
+                foreach (var xCoordinate in xCoordinates)
+                    horizontalPoints.Add(new TSG.Point(xCoordinate, anchorY, 0));
+
+                CreateDimensionSet(
+                    selectedView,
+                    horizontalPoints,
+                    GetHorizontalDirectionVector(options.HorizontalPlacement),
+                    OverallDimensionOffsetMillimeters,
+                    options.DimensionType
+                );
+            }
+
+            if (options.CreateVertical && totalHeight >= MinimumDimensionSpanMillimeters && yCoordinates.Count >= 2) {
+                var anchorX = options.VerticalPlacement == VerticalDimensionPlacement.Right
+                    ? selectedBounds.MaxX
+                    : selectedBounds.MinX;
+
+                var verticalPoints = new TSD.PointList();
+                foreach (var yCoordinate in yCoordinates)
+                    verticalPoints.Add(new TSG.Point(anchorX, yCoordinate, 0));
+
+                CreateDimensionSet(
+                    selectedView,
+                    verticalPoints,
+                    GetVerticalDirectionVector(options.VerticalPlacement),
+                    OverallDimensionOffsetMillimeters,
+                    options.DimensionType
+                );
+            }
+        }
+
+        private static TSG.Vector GetHorizontalDirectionVector(HorizontalDimensionPlacement placement) {
+            return placement == HorizontalDimensionPlacement.Above
+                ? new TSG.Vector(0.0, 1.0, 0.0)
+                : new TSG.Vector(0.0, -1.0, 0.0);
+        }
+
+        private static TSG.Vector GetVerticalDirectionVector(VerticalDimensionPlacement placement) {
+            return placement == VerticalDimensionPlacement.Right
+                ? new TSG.Vector(1.0, 0.0, 0.0)
+                : new TSG.Vector(-1.0, 0.0, 0.0);
+        }
+
+        private static void CreateDimensionSet(
+            TSD.View selectedView,
+            TSD.PointList dimensionPoints,
+            TSG.Vector directionVector,
+            double offsetMillimeters,
+            DimensionType dimensionType
+        ) {
+            if (dimensionType == DimensionType.Straight) {
+                var straightHandler = new TSD.StraightDimensionSetHandler();
+                straightHandler.CreateDimensionSet(
+                    selectedView,
+                    dimensionPoints,
+                    directionVector,
+                    offsetMillimeters
+                );
+                return;
+            }
+
+            var arcPoints = ComputeArcPoints(dimensionPoints, directionVector);
+            var curvedHandler = new TSD.CurvedDimensionSetHandler();
+            curvedHandler.CreateCurvedDimensionSetOrthogonal(
+                selectedView,
+                arcPoints.Item1,
+                arcPoints.Item2,
+                arcPoints.Item3,
+                dimensionPoints,
+                offsetMillimeters
+            );
+        }
+
+        private static Tuple<TSG.Point, TSG.Point, TSG.Point> ComputeArcPoints(
+            TSD.PointList dimensionPoints,
+            TSG.Vector directionVector
+        ) {
+            var points = new List<TSG.Point>();
+            foreach (var item in dimensionPoints)
+                if (item is TSG.Point point)
+                    points.Add(point);
+
+            var firstPoint = points.First();
+            var lastPoint = points.Last();
+
+            var midX = (firstPoint.X + lastPoint.X) / 2.0;
+            var midY = (firstPoint.Y + lastPoint.Y) / 2.0;
+
+            var spanX = lastPoint.X - firstPoint.X;
+            var spanY = lastPoint.Y - firstPoint.Y;
+            var span = Math.Sqrt(spanX * spanX + spanY * spanY);
+            var arcDepth = span * CurvedDimensionArcDepthRatio;
+
+            return Tuple.Create(
+                new TSG.Point(firstPoint.X, firstPoint.Y, 0),
+                new TSG.Point(midX + directionVector.X * arcDepth, midY + directionVector.Y * arcDepth, 0),
+                new TSG.Point(lastPoint.X, lastPoint.Y, 0)
+            );
+        }
+
+        #endregion
+
+        #region Part Selection And View Validation
+
+        private static List<DrawingPartWithBounds> GetSelectedDrawingParts(TSD.DrawingHandler drawingHandler) {
+            if (drawingHandler == null) return new List<DrawingPartWithBounds>();
+
+            var objectSelector = drawingHandler.GetDrawingObjectSelector();
+            if (objectSelector == null) return new List<DrawingPartWithBounds>();
+
+            var selectedObjects = objectSelector.GetSelected();
+            if (selectedObjects == null) return new List<DrawingPartWithBounds>();
+
+            selectedObjects.SelectInstances = true;
+            return BuildPartList(selectedObjects, false);
         }
 
         private static TSD.View GetCommonViewFromSelectedParts(List<DrawingPartWithBounds> drawingParts) {
             if (drawingParts == null || drawingParts.Count == 0) return null;
 
-            var firstPart = drawingParts[0].DrawingPart;
-            if (firstPart == null) return null;
+            var firstDrawingPart = drawingParts[0].DrawingPart;
 
-            var commonView = firstPart.GetView() as TSD.View;
-            if (commonView == null) return null;
+            if (!(firstDrawingPart?.GetView() is TSD.View commonView)) return null;
 
-            foreach (var item in drawingParts) {
-                if (item?.DrawingPart == null) return null;
-
-                var currentView = item.DrawingPart.GetView() as TSD.View;
-                if (currentView == null) return null;
+            foreach (var partWithBounds in drawingParts) {
+                if (!(partWithBounds?.DrawingPart?.GetView() is TSD.View currentView)) return null;
 
                 if (!AreViewsEquivalent(commonView, currentView)) return null;
             }
@@ -216,99 +348,118 @@ namespace HFT_DrawingHelper {
             if (firstView == null || secondView == null) return false;
 
             try {
-                var firstOrigin = firstView.DisplayCoordinateSystem?.Origin;
-                var secondOrigin = secondView.DisplayCoordinateSystem?.Origin;
+                var firstCoordinateSystem = firstView.DisplayCoordinateSystem;
+                var secondCoordinateSystem = secondView.DisplayCoordinateSystem;
 
-                if (firstOrigin == null || secondOrigin == null) return false;
+                if (firstCoordinateSystem == null || secondCoordinateSystem == null) return false;
 
-                return Math.Abs(firstOrigin.X - secondOrigin.X) < 0.001 &&
-                       Math.Abs(firstOrigin.Y - secondOrigin.Y) < 0.001 &&
-                       Math.Abs(firstOrigin.Z - secondOrigin.Z) < 0.001;
+                var originsMatch =
+                    Math.Abs(firstCoordinateSystem.Origin.X - secondCoordinateSystem.Origin.X) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.Origin.Y - secondCoordinateSystem.Origin.Y) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.Origin.Z - secondCoordinateSystem.Origin.Z) < 0.001;
+
+                var axisXMatch =
+                    Math.Abs(firstCoordinateSystem.AxisX.X - secondCoordinateSystem.AxisX.X) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisX.Y - secondCoordinateSystem.AxisX.Y) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisX.Z - secondCoordinateSystem.AxisX.Z) < 0.001;
+
+                var axisYMatch =
+                    Math.Abs(firstCoordinateSystem.AxisY.X - secondCoordinateSystem.AxisY.X) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisY.Y - secondCoordinateSystem.AxisY.Y) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisY.Z - secondCoordinateSystem.AxisY.Z) < 0.001;
+
+                return originsMatch && axisXMatch && axisYMatch;
             }
             catch {
                 return false;
             }
         }
 
-        private static bool DoesPartIntersectViewDepth(TSD.Part drawingPart) {
-            if (drawingPart == null) return false;
-            if (!(drawingPart.GetView() is TSD.View view)) return false;
-            if (view.RestrictionBox == null) return true;
+        #endregion
 
-            var model = new TSM.Model();
-            var modelObject = model.SelectModelObject(drawingPart.ModelIdentifier);
-            if (!(modelObject is TSM.Part modelPart)) return false;
+        #region Part Collection
 
-            var workPlaneHandler = model.GetWorkPlaneHandler();
-            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
+        private static List<DrawingPartWithBounds> GetDrawingPartsFromView(TSD.View selectedView) {
+            if (selectedView == null) return new List<DrawingPartWithBounds>();
 
-            try {
-                workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(view.DisplayCoordinateSystem)
-                );
+            var allObjects = selectedView.GetAllObjects(typeof(TSD.Part));
+            if (allObjects == null) return new List<DrawingPartWithBounds>();
 
-                TSM.Solid solid;
-                try {
-                    solid = modelPart.GetSolid();
-                }
-                catch {
-                    return false;
-                }
-
-                var edgeEnumerator = solid?.GetEdgeEnumerator();
-                if (edgeEnumerator == null) return false;
-
-                var viewMinZ = Math.Min(view.RestrictionBox.MinPoint.Z, view.RestrictionBox.MaxPoint.Z);
-                var viewMaxZ = Math.Max(view.RestrictionBox.MinPoint.Z, view.RestrictionBox.MaxPoint.Z);
-                const double tolerance = 1.0;
-
-                while (edgeEnumerator.MoveNext()) {
-                    dynamic edge = edgeEnumerator.Current;
-                    if (edge == null) continue;
-
-                    if (!TryGetEdgePoints(edge, out TSG.Point startPoint, out TSG.Point endPoint)) continue;
-                    if (startPoint == null || endPoint == null) continue;
-
-                    if (DoesSegmentIntersectDepthRange(startPoint.Z, endPoint.Z, viewMinZ, viewMaxZ, tolerance))
-                        return true;
-                }
-
-                return false;
-            }
-            finally {
-                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
-            }
+            allObjects.SelectInstances = true;
+            return BuildPartList(allObjects, true);
         }
 
-        private static bool DoesSegmentIntersectDepthRange(
-            double startZ,
-            double endZ,
-            double rangeMinZ,
-            double rangeMaxZ,
-            double tolerance
+        private static List<DrawingPartWithBounds> BuildPartList(
+            TSD.DrawingObjectEnumerator source,
+            bool checkDepth
         ) {
-            var segmentMinZ = Math.Min(startZ, endZ);
-            var segmentMaxZ = Math.Max(startZ, endZ);
+            var result = new List<DrawingPartWithBounds>();
+            var addedModelIdentifiers = new HashSet<int>();
 
-            return segmentMaxZ >= rangeMinZ - tolerance &&
-                   segmentMinZ <= rangeMaxZ + tolerance;
+            while (source.MoveNext()) {
+                if (!(source.Current is TSD.Part drawingPart)) continue;
+                if (drawingPart.Hideable != null && drawingPart.Hideable.IsHidden) continue;
+
+                var modelIdentifier = drawingPart.ModelIdentifier.ID;
+                if (!addedModelIdentifiers.Add(modelIdentifier)) continue;
+
+                if (checkDepth && !DoesPartIntersectViewDepth(drawingPart)) continue;
+
+                var partBounds = GetBoundsFromDrawingPart(drawingPart);
+                if (partBounds == null) continue;
+
+                result.Add(new DrawingPartWithBounds {
+                    DrawingPart = drawingPart,
+                    Bounds = partBounds
+                });
+            }
+
+            return result;
+        }
+
+        #endregion
+
+        #region Bounds Calculation
+
+        private static PartBounds GetAssemblyBounds(List<DrawingPartWithBounds> drawingParts) {
+            if (drawingParts == null || drawingParts.Count == 0) return null;
+
+            var minimumX = double.MaxValue;
+            var minimumY = double.MaxValue;
+            var maximumX = double.MinValue;
+            var maximumY = double.MinValue;
+            var foundAny = false;
+
+            foreach (var partWithBounds in drawingParts.Where(partWithBounds => partWithBounds?.Bounds != null)) {
+                if (partWithBounds.Bounds.MinX < minimumX) minimumX = partWithBounds.Bounds.MinX;
+                if (partWithBounds.Bounds.MinY < minimumY) minimumY = partWithBounds.Bounds.MinY;
+                if (partWithBounds.Bounds.MaxX > maximumX) maximumX = partWithBounds.Bounds.MaxX;
+                if (partWithBounds.Bounds.MaxY > maximumY) maximumY = partWithBounds.Bounds.MaxY;
+                foundAny = true;
+            }
+
+            if (!foundAny) return null;
+
+            return new PartBounds {
+                MinX = minimumX,
+                MaxX = maximumX,
+                MinY = minimumY,
+                MaxY = maximumY
+            };
         }
 
         private static PartBounds GetBoundsFromDrawingPart(TSD.Part drawingPart) {
-            if (drawingPart == null) return null;
+            if (!(drawingPart?.GetView() is TSD.View drawingView)) return null;
 
-            var model = new TSM.Model();
-            if (!(drawingPart.GetView() is TSD.View view)) return null;
-
-            var modelObject = model.SelectModelObject(drawingPart.ModelIdentifier);
+            var modelObject = MyModel.SelectModelObject(drawingPart.ModelIdentifier);
             if (!(modelObject is TSM.Part modelPart)) return null;
 
-            var workPlaneHandler = model.GetWorkPlaneHandler();
+            var workPlaneHandler = MyModel.GetWorkPlaneHandler();
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
 
             try {
                 workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(view.DisplayCoordinateSystem)
+                    new TSM.TransformationPlane(drawingView.DisplayCoordinateSystem)
                 );
 
                 TSM.Solid solid;
@@ -329,10 +480,7 @@ namespace HFT_DrawingHelper {
                 var foundAnyPoint = false;
 
                 while (edgeEnumerator.MoveNext()) {
-                    dynamic edge = edgeEnumerator.Current;
-                    if (edge == null) continue;
-
-                    if (!TryGetEdgePoints(edge, out TSG.Point startPoint, out TSG.Point endPoint)) continue;
+                    if (!TryGetEdgePoints(edgeEnumerator.Current, out var startPoint, out var endPoint)) continue;
 
                     UpdateBounds(startPoint, ref minimumX, ref minimumY, ref maximumX, ref maximumY);
                     UpdateBounds(endPoint, ref minimumX, ref minimumY, ref maximumX, ref maximumY);
@@ -353,78 +501,110 @@ namespace HFT_DrawingHelper {
             }
         }
 
-        private static PartBounds GetAssemblyBounds(List<DrawingPartWithBounds> drawingParts) {
-            if (drawingParts == null || drawingParts.Count == 0) return null;
+        private static bool DoesPartIntersectViewDepth(TSD.Part drawingPart) {
+            if (!(drawingPart?.GetView() is TSD.View drawingView)) return false;
+            if (drawingView.RestrictionBox == null) return true;
 
-            var minimumX = double.MaxValue;
-            var minimumY = double.MaxValue;
-            var maximumX = double.MinValue;
-            var maximumY = double.MinValue;
-            var foundAny = false;
+            var modelObject = MyModel.SelectModelObject(drawingPart.ModelIdentifier);
+            if (!(modelObject is TSM.Part modelPart)) return false;
 
-            foreach (var item in drawingParts.Where(item => item?.Bounds != null)) {
-                if (item.Bounds.MinX < minimumX) minimumX = item.Bounds.MinX;
-                if (item.Bounds.MinY < minimumY) minimumY = item.Bounds.MinY;
-                if (item.Bounds.MaxX > maximumX) maximumX = item.Bounds.MaxX;
-                if (item.Bounds.MaxY > maximumY) maximumY = item.Bounds.MaxY;
-                foundAny = true;
+            var workPlaneHandler = MyModel.GetWorkPlaneHandler();
+            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
+
+            try {
+                workPlaneHandler.SetCurrentTransformationPlane(
+                    new TSM.TransformationPlane(drawingView.DisplayCoordinateSystem)
+                );
+
+                TSM.Solid solid;
+                try {
+                    solid = modelPart.GetSolid();
+                }
+                catch {
+                    return false;
+                }
+
+                var edgeEnumerator = solid?.GetEdgeEnumerator();
+                if (edgeEnumerator == null) return false;
+
+                var viewMinimumZ = Math.Min(drawingView.RestrictionBox.MinPoint.Z,
+                    drawingView.RestrictionBox.MaxPoint.Z);
+                var viewMaximumZ = Math.Max(drawingView.RestrictionBox.MinPoint.Z,
+                    drawingView.RestrictionBox.MaxPoint.Z);
+                const double tolerance = 1.0;
+
+                while (edgeEnumerator.MoveNext()) {
+                    if (!TryGetEdgePoints(edgeEnumerator.Current, out var startPoint, out var endPoint)) continue;
+                    if (startPoint == null || endPoint == null) continue;
+
+                    if (DoesSegmentIntersectDepthRange(startPoint.Z, endPoint.Z, viewMinimumZ, viewMaximumZ, tolerance))
+                        return true;
+                }
+
+                return false;
             }
+            finally {
+                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
+            }
+        }
 
-            if (!foundAny) return null;
+        private static bool DoesSegmentIntersectDepthRange(
+            double segmentStartZ,
+            double segmentEndZ,
+            double rangeMinimumZ,
+            double rangeMaximumZ,
+            double tolerance
+        ) {
+            var segmentMinimumZ = Math.Min(segmentStartZ, segmentEndZ);
+            var segmentMaximumZ = Math.Max(segmentStartZ, segmentEndZ);
 
-            return new PartBounds {
-                MinX = minimumX,
-                MaxX = maximumX,
-                MinY = minimumY,
-                MaxY = maximumY
-            };
+            return segmentMaximumZ >= rangeMinimumZ - tolerance &&
+                   segmentMinimumZ <= rangeMaximumZ + tolerance;
         }
 
         #endregion
 
-        #region Drawing
+        #region Part Frame Drawing
 
         private static void DrawPartFramesAndNames(List<DrawingPartWithBounds> drawingParts) {
             if (drawingParts == null || drawingParts.Count == 0) return;
 
-            foreach (var item in drawingParts.Where(item => item?.DrawingPart != null && item.Bounds != null)) {
-                if (!(item.DrawingPart.GetView() is TSD.View view)) continue;
+            foreach (var partWithBounds in drawingParts.Where(partWithBounds =>
+                         partWithBounds?.DrawingPart != null && partWithBounds.Bounds != null)) {
+                if (!(partWithBounds.DrawingPart.GetView() is TSD.View drawingView)) continue;
 
-                DrawRectangleForBounds(view, item.Bounds);
+                DrawRectangleForBounds(drawingView, partWithBounds.Bounds);
 
-                var centerX = (item.Bounds.MinX + item.Bounds.MaxX) / 2.0;
-                var centerY = (item.Bounds.MinY + item.Bounds.MaxY) / 2.0;
-                var label = GetDrawingPartLabel(item.DrawingPart);
+                var centerX = (partWithBounds.Bounds.MinX + partWithBounds.Bounds.MaxX) / 2.0;
+                var centerY = (partWithBounds.Bounds.MinY + partWithBounds.Bounds.MaxY) / 2.0;
 
-                new TSD.Text(view, new TSG.Point(centerX, centerY, 0), label).Insert();
+                new TSD.Text(drawingView, new TSG.Point(centerX, centerY, 0), GetPartLabel(partWithBounds.DrawingPart))
+                    .Insert();
             }
         }
 
-        private static void DrawRectangleForBounds(TSD.View selectedView, PartBounds bounds) {
-            if (selectedView == null || bounds == null) return;
+        private static void DrawRectangleForBounds(TSD.View drawingView, PartBounds bounds) {
+            if (drawingView == null || bounds == null) return;
 
-            var points = new TSD.PointList {
+            var cornerPoints = new TSD.PointList {
                 new TSG.Point(bounds.MinX, bounds.MinY, 0),
                 new TSG.Point(bounds.MinX, bounds.MaxY, 0),
                 new TSG.Point(bounds.MaxX, bounds.MaxY, 0),
                 new TSG.Point(bounds.MaxX, bounds.MinY, 0)
             };
 
-            var polygon = new TSD.Polygon(selectedView, points);
-            polygon.Attributes.Line.Color = TSD.DrawingColors.Red;
-            polygon.Insert();
+            var boundingPolygon = new TSD.Polygon(drawingView, cornerPoints);
+            boundingPolygon.Attributes.Line.Color = TSD.DrawingColors.Red;
+            boundingPolygon.Insert();
         }
 
-        private static string GetDrawingPartLabel(TSD.Part drawingPart) {
+        private static string GetPartLabel(TSD.Part drawingPart) {
             if (drawingPart == null) return "Unknown";
 
-            var model = new TSM.Model();
-
             try {
-                var modelObject = model.SelectModelObject(drawingPart.ModelIdentifier);
-                if (modelObject is TSM.Part modelPart)
-                    if (!string.IsNullOrWhiteSpace(modelPart.Name))
-                        return modelPart.Name;
+                var modelObject = MyModel.SelectModelObject(drawingPart.ModelIdentifier);
+                if (modelObject is TSM.Part modelPart && !string.IsNullOrWhiteSpace(modelPart.Name))
+                    return modelPart.Name;
 
                 return modelObject?.GetType().Name ?? drawingPart.GetType().Name;
             }
@@ -435,29 +615,38 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
-        #region Geometry Extraction
+        #region Geometry Helpers
 
         private static bool TryGetEdgePoints(
-            dynamic edge,
+            object edge,
             out TSG.Point startPoint,
             out TSG.Point endPoint
         ) {
             startPoint = null;
             endPoint = null;
 
-            try {
-                startPoint = edge.StartPoint as TSG.Point;
-                endPoint = edge.EndPoint as TSG.Point;
-                if (startPoint != null && endPoint != null) return true;
-            }
-            catch {
-                // ignored
-            }
+            if (edge == null) return false;
 
             try {
-                startPoint = edge.Point1 as TSG.Point;
-                endPoint = edge.Point2 as TSG.Point;
-                if (startPoint != null && endPoint != null) return true;
+                dynamic dynamicEdge = edge;
+
+                var candidateStartPoint = dynamicEdge.StartPoint as TSG.Point;
+                var candidateEndPoint = dynamicEdge.EndPoint as TSG.Point;
+
+                if (candidateStartPoint != null && candidateEndPoint != null) {
+                    startPoint = candidateStartPoint;
+                    endPoint = candidateEndPoint;
+                    return true;
+                }
+
+                candidateStartPoint = dynamicEdge.Point1 as TSG.Point;
+                candidateEndPoint = dynamicEdge.Point2 as TSG.Point;
+
+                if (candidateStartPoint != null && candidateEndPoint != null) {
+                    startPoint = candidateStartPoint;
+                    endPoint = candidateEndPoint;
+                    return true;
+                }
             }
             catch {
                 // ignored
@@ -480,13 +669,6 @@ namespace HFT_DrawingHelper {
             if (point.X > maximumX) maximumX = point.X;
             if (point.Y > maximumY) maximumY = point.Y;
         }
-
-        #endregion
-
-        #region Constants
-
-        private const double OverallDimensionOffsetMillimeters = 20.0;
-        private const double MinimumDimensionSpanMillimeters = 1.0;
 
         #endregion
     }

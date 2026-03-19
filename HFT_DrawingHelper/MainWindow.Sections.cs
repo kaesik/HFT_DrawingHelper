@@ -19,6 +19,11 @@ namespace HFT_DrawingHelper {
             var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
             if (selectedView == null) return;
 
+            if (!HasExactlyOnePart(selectedView)) {
+                MessageBox.Show("Widok musi zawierać dokładnie jeden element typu Part.");
+                return;
+            }
+
             var detectionResult = DetectEdgesFromSelectedView(selectedView);
 
             if (!detectionResult.HasEdges) {
@@ -47,7 +52,6 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
-
         #region Section View Creation
 
         private static void CreateSectionViewsFromEdges(
@@ -60,7 +64,6 @@ namespace HFT_DrawingHelper {
             var (viewAttrs, markAttrs) = GetSectionAttributes();
 
             var baseBox = baseView.GetAxisAlignedBoundingBox();
-
             var cursorX = baseBox.UpperRight.X + Gap;
             var cursorY = baseBox.UpperRight.Y;
 
@@ -79,7 +82,6 @@ namespace HFT_DrawingHelper {
 
                 var dx = edgeB.X - edgeA.X;
                 var dy = edgeB.Y - edgeA.Y;
-
                 var length = Math.Sqrt(dx * dx + dy * dy);
                 if (length < 1e-6) continue;
 
@@ -100,7 +102,7 @@ namespace HFT_DrawingHelper {
                     midPoint.Z
                 );
 
-                ForceSectionLookLeftOrUp(ref startPoint, ref endPoint);
+                NormalizeSectionDirection(ref startPoint, ref endPoint);
 
                 var insertionPoint = new TSG.Point(cursorX, cursorY, baseView.Origin.Z);
 
@@ -142,7 +144,6 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
-
         #region Section Attributes
 
         private static (TSD.View.ViewAttributes, TSD.SectionMarkBase.SectionMarkAttributes) GetSectionAttributes() {
@@ -155,13 +156,11 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
-
         #region Section Orientation
 
-        private static void ForceSectionLookLeftOrUp(ref TSG.Point startPoint, ref TSG.Point endPoint) {
+        private static void NormalizeSectionDirection(ref TSG.Point startPoint, ref TSG.Point endPoint) {
             var dx = endPoint.X - startPoint.X;
             var dy = endPoint.Y - startPoint.Y;
-
             var length = Math.Sqrt(dx * dx + dy * dy);
             if (length < 1e-9) return;
 
@@ -177,7 +176,6 @@ namespace HFT_DrawingHelper {
         }
 
         #endregion
-
 
         #region Edge Filtering
 
@@ -209,11 +207,6 @@ namespace HFT_DrawingHelper {
 
         private const string ViewAttributeName = "#HFT_Kant_Section";
         private const string MarkAttributeName = "#HFT_SECTION_V";
-
-        #endregion
-
-        #region Section Constants
-
         private const double DepthUp = 1.0;
         private const double DepthDown = 1.0;
         private const double SectionLineLengthMillimeters = 300.0;

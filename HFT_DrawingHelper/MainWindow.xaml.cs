@@ -6,15 +6,15 @@ using TSD = Tekla.Structures.Drawing;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
-        public MainWindow() {
-            var myModel = new TSM.Model();
+        private static readonly TSM.Model MyModel = new TSM.Model();
 
-            if (myModel.GetConnectionStatus()) {
+        public MainWindow() {
+            if (MyModel.GetConnectionStatus()) {
                 InitializeComponent();
-                ModelDrawingLabel.Content = myModel.GetInfo().ModelName.Replace(".db1", "");
+                ModelDrawingLabel.Content = MyModel.GetInfo().ModelName.Replace(".db1", "");
             }
             else
-                MessageBox.Show("Keine Verbindung zu Tekla Structures");
+                MessageBox.Show("Brak połączenia z Tekla Structures.");
         }
 
         private void DrawEdgesButton_Click(object sender, RoutedEventArgs e) {
@@ -28,25 +28,50 @@ namespace HFT_DrawingHelper {
         }
 
         private void AddDimensionsButton_Click(object sender, RoutedEventArgs e) {
-            AddDimensions();
+            var dimensionType = CurvedDimensionRadioButton.IsChecked == true
+                ? DimensionType.Curved
+                : DimensionType.Straight;
+
+            var horizontalPlacement = DimensionAboveRadioButton.IsChecked == true
+                ? HorizontalDimensionPlacement.Above
+                : HorizontalDimensionPlacement.Below;
+
+            var verticalPlacement = DimensionRightRadioButton.IsChecked == true
+                ? VerticalDimensionPlacement.Right
+                : VerticalDimensionPlacement.Left;
+
+            var options = new DimensionOptions {
+                DimensionType = dimensionType,
+                HorizontalPlacement = horizontalPlacement,
+                VerticalPlacement = verticalPlacement,
+                CreateHorizontal = HorizontalDimensionCheckBox.IsChecked == true,
+                CreateVertical = VerticalDimensionCheckBox.IsChecked == true
+            };
+
+            if (!options.CreateHorizontal && !options.CreateVertical) {
+                MessageBox.Show("Zaznacz co najmniej jeden wymiar do utworzenia.");
+                return;
+            }
+
+            AddDimensions(options);
         }
 
         #region Helpers
 
         private static TSD.View GetSelectedViewOrShowMessage(TSD.DrawingHandler drawingHandler) {
-            var selector = drawingHandler.GetDrawingObjectSelector();
-            var selected = selector.GetSelected();
+            var objectSelector = drawingHandler.GetDrawingObjectSelector();
+            var selectedObjects = objectSelector.GetSelected();
 
-            if (selected == null) {
+            if (selectedObjects == null) {
                 MessageBox.Show("Nie zaznaczono żadnego obiektu.");
                 return null;
             }
 
             TSD.View selectedView = null;
 
-            selected.SelectInstances = false;
-            while (selected.MoveNext()) {
-                selectedView = selected.Current as TSD.View;
+            selectedObjects.SelectInstances = false;
+            while (selectedObjects.MoveNext()) {
+                selectedView = selectedObjects.Current as TSD.View;
                 if (selectedView != null) break;
             }
 
@@ -60,9 +85,8 @@ namespace HFT_DrawingHelper {
 
         private static List<TSM.Part> GetModelPartsFromDrawingView(TSD.View drawingView) {
             var modelParts = new List<TSM.Part>();
-            var addedModelIdentifiers = new HashSet<string>();
+            var addedModelIdentifiers = new HashSet<int>();
 
-            var model = new TSM.Model();
             var drawingObjectEnumerator = drawingView.GetAllObjects();
             if (drawingObjectEnumerator == null) return modelParts;
 
@@ -82,14 +106,13 @@ namespace HFT_DrawingHelper {
 
                 if (modelIdentifierObject == null) continue;
 
-                var identifierString = modelIdentifierObject.ToString();
-                if (addedModelIdentifiers.Contains(identifierString)) continue;
+                var identifier = (TS.Identifier)modelIdentifierObject;
+                if (!addedModelIdentifiers.Add(identifier.ID)) continue;
 
                 try {
-                    var modelObject = model.SelectModelObject((TS.Identifier)modelIdentifierObject);
+                    var modelObject = MyModel.SelectModelObject(identifier);
                     if (!(modelObject is TSM.Part modelPart)) continue;
 
-                    addedModelIdentifiers.Add(identifierString);
                     modelParts.Add(modelPart);
                 }
                 catch {

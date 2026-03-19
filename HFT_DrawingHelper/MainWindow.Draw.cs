@@ -20,6 +20,11 @@ namespace HFT_DrawingHelper {
             return null;
         }
 
+        private static bool HasExactlyOnePart(TSD.View selectedView) {
+            var modelParts = GetModelPartsFromDrawingView(selectedView);
+            return modelParts != null && modelParts.Count == 1;
+        }
+
         #endregion
 
         #region Constants
@@ -36,6 +41,7 @@ namespace HFT_DrawingHelper {
         private const int TargetBinCount = 60;
         private const int SmoothingWindowRadius = 2;
         private const int EdgeLockBinCount = 3;
+        private const int MaximumInlineEdgeCount = 10;
 
         #endregion
 
@@ -50,6 +56,11 @@ namespace HFT_DrawingHelper {
 
             var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
             if (selectedView == null) return null;
+
+            if (!HasExactlyOnePart(selectedView)) {
+                MessageBox.Show("Widok musi zawierać dokładnie jeden element typu Part.");
+                return null;
+            }
 
             var detectionResult = DetectEdgesFromSelectedView(selectedView);
 
@@ -137,8 +148,7 @@ namespace HFT_DrawingHelper {
             if (selectedView == null) return edgesByNumber;
             if (modelParts == null || modelParts.Count == 0) return edgesByNumber;
 
-            var model = new TSM.Model();
-            var workPlaneHandler = model.GetWorkPlaneHandler();
+            var workPlaneHandler = MyModel.GetWorkPlaneHandler();
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
 
             try {
@@ -271,8 +281,7 @@ namespace HFT_DrawingHelper {
             var part = FindFirstPart<TPart>(modelParts);
             if (part == null) return edgesByNumber;
 
-            var model = new TSM.Model();
-            var workPlaneHandler = model.GetWorkPlaneHandler();
+            var workPlaneHandler = MyModel.GetWorkPlaneHandler();
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
 
             try {
@@ -336,38 +345,25 @@ namespace HFT_DrawingHelper {
             var points = new List<TSG.Point>();
             if (solid == null) return points;
 
-            var minimumPoint = solid.MinimumPoint;
-            var maximumPoint = solid.MaximumPoint;
-            var centerZ = (minimumPoint.Z + maximumPoint.Z) * 0.5;
+            var centerZ = (solid.MinimumPoint.Z + solid.MaximumPoint.Z) * 0.5;
 
             var upwardEmptySteps = 0;
             var downwardEmptySteps = 0;
-            var offset = 0.0;
-            var firstIteration = true;
 
-            while (upwardEmptySteps < MaximumEmptyStepsPerDirection ||
-                   downwardEmptySteps < MaximumEmptyStepsPerDirection) {
-                if (firstIteration) {
-                    var centerPoints = GetIntersectionPointsAtLocalZ(solid, centerZ);
+            var centerPoints = GetIntersectionPointsAtLocalZ(solid, centerZ);
+            if (centerPoints.Count > 0)
+                points.AddRange(centerPoints);
+            else {
+                upwardEmptySteps++;
+                downwardEmptySteps++;
+            }
 
-                    if (centerPoints.Count > 0) {
-                        points.AddRange(centerPoints);
-                        upwardEmptySteps = 0;
-                        downwardEmptySteps = 0;
-                    }
-                    else {
-                        upwardEmptySteps++;
-                        downwardEmptySteps++;
-                    }
-
-                    firstIteration = false;
-                    offset += ZStepMillimeters;
-                    continue;
-                }
-
+            for (var offset = ZStepMillimeters;
+                 upwardEmptySteps < MaximumEmptyStepsPerDirection ||
+                 downwardEmptySteps < MaximumEmptyStepsPerDirection;
+                 offset += ZStepMillimeters) {
                 if (upwardEmptySteps < MaximumEmptyStepsPerDirection) {
-                    var upperZ = centerZ + offset;
-                    var upperPoints = GetIntersectionPointsAtLocalZ(solid, upperZ);
+                    var upperPoints = GetIntersectionPointsAtLocalZ(solid, centerZ + offset);
 
                     if (upperPoints.Count > 0) {
                         points.AddRange(upperPoints);
@@ -378,8 +374,7 @@ namespace HFT_DrawingHelper {
                 }
 
                 if (downwardEmptySteps < MaximumEmptyStepsPerDirection) {
-                    var lowerZ = centerZ - offset;
-                    var lowerPoints = GetIntersectionPointsAtLocalZ(solid, lowerZ);
+                    var lowerPoints = GetIntersectionPointsAtLocalZ(solid, centerZ - offset);
 
                     if (lowerPoints.Count > 0) {
                         points.AddRange(lowerPoints);
@@ -388,8 +383,6 @@ namespace HFT_DrawingHelper {
                     else
                         downwardEmptySteps++;
                 }
-
-                offset += ZStepMillimeters;
             }
 
             return RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
@@ -454,11 +447,6 @@ namespace HFT_DrawingHelper {
             foreach (var bucket in orderedBins) {
                 var lowerPointIndex = (int)Math.Floor((bucket.Count - 1) * 0.15);
                 var upperPointIndex = (int)Math.Ceiling((bucket.Count - 1) * 0.85);
-
-                if (lowerPointIndex < 0) lowerPointIndex = 0;
-                if (upperPointIndex < 0) upperPointIndex = 0;
-                if (lowerPointIndex >= bucket.Count) lowerPointIndex = bucket.Count - 1;
-                if (upperPointIndex >= bucket.Count) upperPointIndex = bucket.Count - 1;
 
                 lowerChain.Add(new TSG.Point(bucket[lowerPointIndex].X, bucket[lowerPointIndex].Y, 0));
                 upperChain.Add(new TSG.Point(bucket[upperPointIndex].X, bucket[upperPointIndex].Y, 0));
@@ -872,7 +860,8 @@ namespace HFT_DrawingHelper {
                 .OrderBy(number => number)
                 .ToList();
 
-            if (orderedNumbers.Count <= 10) return string.Join(",", orderedNumbers);
+            if (orderedNumbers.Count <= MaximumInlineEdgeCount)
+                return string.Join(",", orderedNumbers);
 
             return orderedNumbers.First() + "-" + orderedNumbers.Last();
         }
@@ -1024,7 +1013,6 @@ namespace HFT_DrawingHelper {
             var beforeMinY = beforePoints.Min(point => point.Y);
 
             var center = ComputeEdgesCenter2D(edges);
-
             var radians = angleDegrees * Math.PI / 180.0;
             var cos = Math.Cos(radians);
             var sin = Math.Sin(radians);
@@ -1101,14 +1089,20 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
-        private static TSG.Point RotatePointAroundCenter2D(TSG.Point point, TSG.Point center, double cos, double sin) {
+        private static TSG.Point RotatePointAroundCenter2D(
+            TSG.Point point,
+            TSG.Point center,
+            double cos,
+            double sin
+        ) {
             var dx = point.X - center.X;
             var dy = point.Y - center.Y;
 
-            var rx = center.X + dx * cos - dy * sin;
-            var ry = center.Y + dx * sin + dy * cos;
-
-            return new TSG.Point(rx, ry, 0);
+            return new TSG.Point(
+                center.X + dx * cos - dy * sin,
+                center.Y + dx * sin + dy * cos,
+                0
+            );
         }
 
         #endregion
@@ -1129,7 +1123,6 @@ namespace HFT_DrawingHelper {
         ) {
             var firstVectorX = firstPoint.X - vertexPoint.X;
             var firstVectorY = firstPoint.Y - vertexPoint.Y;
-
             var secondVectorX = secondPoint.X - vertexPoint.X;
             var secondVectorY = secondPoint.Y - vertexPoint.Y;
 
@@ -1144,23 +1137,24 @@ namespace HFT_DrawingHelper {
             if (cosineValue > 1.0) cosineValue = 1.0;
             if (cosineValue < -1.0) cosineValue = -1.0;
 
-            var angleInRadians = Math.Acos(cosineValue);
-            return angleInRadians * 180.0 / Math.PI;
+            return Math.Acos(cosineValue) * 180.0 / Math.PI;
         }
 
         private static List<TSG.Point> RemoveNearDuplicates(List<TSG.Point> points, double epsilon) {
             if (points == null || points.Count == 0) return new List<TSG.Point>();
 
+            var seen = new HashSet<(long, long)>();
             var result = new List<TSG.Point>();
 
-            foreach (var point in from point in points
-                     let exists = result.Any(existingPoint =>
-                         Math.Abs(existingPoint.X - point.X) <= epsilon &&
-                         Math.Abs(existingPoint.Y - point.Y) <= epsilon
-                     )
-                     where !exists
-                     select point)
-                result.Add(point);
+            foreach (var point in points) {
+                var key = (
+                    (long)Math.Round(point.X / epsilon),
+                    (long)Math.Round(point.Y / epsilon)
+                );
+
+                if (seen.Add(key))
+                    result.Add(point);
+            }
 
             return result;
         }
@@ -1224,8 +1218,8 @@ namespace HFT_DrawingHelper {
                 var toIndex = Math.Min(points.Count - 1, index + windowRadius);
 
                 var yValues = new List<double>();
-
-                for (var innerIndex = fromIndex; innerIndex <= toIndex; innerIndex++) yValues.Add(points[innerIndex].Y);
+                for (var innerIndex = fromIndex; innerIndex <= toIndex; innerIndex++)
+                    yValues.Add(points[innerIndex].Y);
 
                 yValues.Sort();
                 result.Add(new TSG.Point(points[index].X, yValues[yValues.Count / 2], 0));

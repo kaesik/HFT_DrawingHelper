@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Windows;
+using System.Windows.Input;
 using TS = Tekla.Structures;
 using TSM = Tekla.Structures.Model;
 using TSD = Tekla.Structures.Drawing;
@@ -11,7 +12,7 @@ namespace HFT_DrawingHelper {
         public MainWindow() {
             if (MyModel.GetConnectionStatus()) {
                 InitializeComponent();
-                ModelDrawingLabel.Content = MyModel.GetInfo().ModelName.Replace(".db1", "");
+                ModelDrawingLabel.Text = MyModel.GetInfo().ModelName.Replace(".db1", "");
             }
             else
                 MessageBox.Show("Brak połączenia z Tekla Structures.");
@@ -54,6 +55,17 @@ namespace HFT_DrawingHelper {
             }
 
             AddDimensions(options);
+        }
+
+        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
+            DragMove();
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e) {
+            Close();
+        }
+
+        private void ThemeToggle_Click(object sender, RoutedEventArgs e) {
         }
 
         #region Helpers

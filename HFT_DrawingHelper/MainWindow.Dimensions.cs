@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using TSD = Tekla.Structures.Drawing;
 using TSM = Tekla.Structures.Model;
@@ -8,27 +10,6 @@ using TSG = Tekla.Structures.Geometry3d;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
-        #region Entry Point
-
-        private static void AddDimensions(DimensionOptions options) {
-            var drawingHandler = new TSD.DrawingHandler();
-            if (!drawingHandler.GetConnectionStatus()) return;
-
-            var activeDrawing = drawingHandler.GetActiveDrawing();
-            if (activeDrawing == null) return;
-
-            var selectedParts = GetSelectedDrawingParts(drawingHandler);
-
-            if (selectedParts == null || selectedParts.Count == 0) {
-                AddDimensionsFromSelectedView(drawingHandler, activeDrawing, options);
-                return;
-            }
-
-            AddDimensionsFromSelectedParts(activeDrawing, selectedParts, options);
-        }
-
-        #endregion
-
         #region Geometry Helpers
 
         private static List<double> MergeAndSort(IEnumerable<double> rawValues, double tolerance) {
@@ -77,7 +58,155 @@ namespace HFT_DrawingHelper {
                 found = true;
             }
 
-            return !found ? null : new PartBounds { MinX = minX, MaxX = maxX, MinY = minY, MaxY = maxY };
+            var result = !found ? null : new PartBounds { MinX = minX, MaxX = maxX, MinY = minY, MaxY = maxY };
+            return result;
+        }
+
+        #endregion
+
+        #region Entry Point
+
+        private static readonly StringBuilder DebugBuilder = new StringBuilder();
+        private static string _debugFilePath;
+
+        private static void AddDimensions(DimensionOptions options) {
+            StartDebugSession();
+
+            try {
+                LogDebug("=== START AddDimensions ===");
+
+                var drawingHandler = new TSD.DrawingHandler();
+                if (!drawingHandler.GetConnectionStatus()) {
+                    LogDebug("Brak połączenia z drawingHandler.");
+                    FlushDebugSession();
+                    return;
+                }
+
+                var activeDrawing = drawingHandler.GetActiveDrawing();
+                if (activeDrawing == null) {
+                    LogDebug("Brak aktywnego rysunku.");
+                    FlushDebugSession();
+                    return;
+                }
+
+                LogDebug("Aktywny rysunek pobrany poprawnie.");
+
+                var selectedParts = GetSelectedDrawingParts(drawingHandler);
+                LogDebug("Liczba zaznaczonych partów: " + selectedParts.Count);
+
+                if (selectedParts.Count == 0) {
+                    LogDebug("Brak zaznaczonych partów -> AddDimensionsFromSelectedView");
+                    AddDimensionsFromSelectedView(drawingHandler, activeDrawing, options);
+                    FlushDebugSession();
+                    return;
+                }
+
+                LogDebug("Są zaznaczone party -> AddDimensionsFromSelectedParts");
+                AddDimensionsFromSelectedParts(activeDrawing, selectedParts, options);
+                FlushDebugSession();
+            }
+            catch (Exception exception) {
+                LogDebug("WYJĄTEK AddDimensions: " + exception);
+                FlushDebugSession();
+                throw;
+            }
+        }
+
+        #endregion
+
+        #region Debug
+
+        private static void StartDebugSession() {
+            DebugBuilder.Clear();
+            _debugFilePath = Path.Combine(
+                Path.GetTempPath(),
+                "HFT_DrawingHelper_Debug_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".txt"
+            );
+
+            DebugBuilder.AppendLine("HFT Drawing Helper Debug");
+            DebugBuilder.AppendLine("Data: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            DebugBuilder.AppendLine(new string('-', 80));
+        }
+
+        private static void FlushDebugSession() {
+            try {
+                File.WriteAllText(_debugFilePath, DebugBuilder.ToString(), Encoding.UTF8);
+                MessageBox.Show("Zapisano debug do:\n" + _debugFilePath);
+            }
+            catch (Exception exception) {
+                MessageBox.Show("Nie udało się zapisać debug loga:\n" + exception.Message);
+            }
+        }
+
+        private static void LogDebug(string message) {
+            DebugBuilder.AppendLine("[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] " + message);
+        }
+
+        private static void LogPoint(string label, TSG.Point point) {
+            if (point == null) {
+                LogDebug(label + ": null");
+                return;
+            }
+
+            LogDebug(string.Format(
+                "{0}: X={1:0.###}, Y={2:0.###}, Z={3:0.###}",
+                label,
+                point.X,
+                point.Y,
+                point.Z
+            ));
+        }
+
+        private static void LogBounds(string label, PartBounds bounds) {
+            if (bounds == null) {
+                LogDebug(label + ": null");
+                return;
+            }
+
+            LogDebug(string.Format(
+                "{0}: MinX={1:0.###}, MaxX={2:0.###}, MinY={3:0.###}, MaxY={4:0.###}, Width={5:0.###}, Height={6:0.###}",
+                label,
+                bounds.MinX,
+                bounds.MaxX,
+                bounds.MinY,
+                bounds.MaxY,
+                bounds.MaxX - bounds.MinX,
+                bounds.MaxY - bounds.MinY
+            ));
+        }
+
+        private static void LogPointsSummary(string label, List<TSG.Point> points, int previewCount = 10) {
+            if (points == null) {
+                LogDebug(label + ": null");
+                return;
+            }
+
+            LogDebug(label + " count = " + points.Count);
+
+            for (var i = 0; i < points.Count && i < previewCount; i++) {
+                var point = points[i];
+                LogDebug(string.Format(
+                    "{0}[{1}] = X={2:0.###}, Y={3:0.###}, Z={4:0.###}",
+                    label,
+                    i,
+                    point.X,
+                    point.Y,
+                    point.Z
+                ));
+            }
+
+            if (points.Count > previewCount)
+                LogDebug(label + ": ...");
+        }
+
+        private static void LogValuesSummary(string label, List<double> values) {
+            if (values == null) {
+                LogDebug(label + ": null");
+                return;
+            }
+
+            LogDebug(label + " count = " + values.Count + " -> " +
+                     string.Join(", ", values.Select(v => v.ToString("0.###"))));
         }
 
         #endregion
@@ -89,9 +218,6 @@ namespace HFT_DrawingHelper {
         private const double CurvedDimensionArcDepthRatio = 0.15;
         private const double DimensionMergeToleranceMillimeters = 1.0;
         private const double MinimumPartSizeForDimensionMillimeters = 20.0;
-
-        // Krok X-sweep dla LoftedPlate — co ile mm wzdłuż długości próbkujemy.
-        // 20mm daje wystarczającą dokładność nawet dla gwałtownych zmian krzywizny.
         private const double LoftedPlateXStepMillimeters = 20.0;
 
         #endregion
@@ -141,11 +267,22 @@ namespace HFT_DrawingHelper {
             TSD.Drawing activeDrawing,
             DimensionOptions options
         ) {
+            LogDebug("=== AddDimensionsFromSelectedView ===");
+
             var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
-            if (selectedView == null) return;
+            if (selectedView == null) {
+                LogDebug("selectedView == null");
+                return;
+            }
+
+            LogDebug("Wybrany widok poprawny.");
 
             var allViewBounds = GetPartBoundsFromView(selectedView);
+            LogDebug("Bounds z widoku: " + allViewBounds.Count);
+
             var allPartsBounds = GetAssemblyBounds(allViewBounds);
+            LogBounds("allPartsBounds(view)", allPartsBounds);
+
             if (allPartsBounds == null) {
                 MessageBox.Show("Nie udało się wyznaczyć obwiedni elementów w widoku.");
                 return;
@@ -153,6 +290,7 @@ namespace HFT_DrawingHelper {
 
             CreateOverallAssemblyDimensions(selectedView, allPartsBounds, allViewBounds, options);
             activeDrawing.CommitChanges();
+            LogDebug("CommitChanges wykonany dla AddDimensionsFromSelectedView.");
         }
 
         private static void AddDimensionsFromSelectedParts(
@@ -160,24 +298,35 @@ namespace HFT_DrawingHelper {
             List<DrawingPartWithBounds> selectedParts,
             DimensionOptions options
         ) {
+            LogDebug("=== AddDimensionsFromSelectedParts ===");
+            LogDebug("selectedParts.Count = " + selectedParts.Count);
+
             var selectedView = GetCommonViewFromSelectedParts(selectedParts);
             if (selectedView == null) {
                 MessageBox.Show("Zaznaczone elementy muszą należeć do jednego widoku.");
+                LogDebug("selectedView == null lub party z różnych widoków.");
                 return;
             }
 
             DrawPartEdgeOutlines(selectedView, selectedParts);
 
             var allViewBounds = GetPartBoundsFromView(selectedView);
+            LogDebug("allViewBounds.Count = " + allViewBounds.Count);
+
             var allPartsBounds = GetAssemblyBounds(allViewBounds);
+            LogBounds("allPartsBounds(selectedView)", allPartsBounds);
+
             if (allPartsBounds == null) {
                 MessageBox.Show("Nie udało się wyznaczyć obwiedni wszystkich elementów w widoku.");
                 return;
             }
 
             var selectedBounds = GetPartBoundsFromDrawingParts(selectedView, selectedParts);
+            LogDebug("selectedBounds.Count = " + selectedBounds.Count);
+
             CreateOverallAssemblyDimensions(selectedView, allPartsBounds, selectedBounds, options);
             activeDrawing.CommitChanges();
+            LogDebug("CommitChanges wykonany dla AddDimensionsFromSelectedParts.");
         }
 
         #endregion
@@ -192,7 +341,12 @@ namespace HFT_DrawingHelper {
         ) {
             if (selectedView == null || allPartsBounds == null) return;
 
+            LogDebug("=== CreateOverallAssemblyDimensions ===");
+            LogBounds("allPartsBounds", allPartsBounds);
+
             var selectedBounds = GetAssemblyBounds(parts);
+            LogBounds("selectedBounds", selectedBounds);
+
             if (selectedBounds == null) return;
 
             var xCoordinates = MergeAndSort(
@@ -211,14 +365,22 @@ namespace HFT_DrawingHelper {
                 DimensionMergeToleranceMillimeters
             );
 
+            LogValuesSummary("xCoordinates", xCoordinates);
+            LogValuesSummary("yCoordinates", yCoordinates);
+
             var totalWidth = allPartsBounds.MaxX - allPartsBounds.MinX;
             var totalHeight = allPartsBounds.MaxY - allPartsBounds.MinY;
+
+            LogDebug("totalWidth = " + totalWidth.ToString("0.###"));
+            LogDebug("totalHeight = " + totalHeight.ToString("0.###"));
 
             if (options.CreateHorizontal && totalWidth >= MinimumDimensionSpanMillimeters &&
                 xCoordinates.Count >= 2) {
                 var anchorY = options.HorizontalPlacement == HorizontalDimensionPlacement.Above
                     ? selectedBounds.MaxY
                     : selectedBounds.MinY;
+
+                LogDebug("Tworzenie wymiaru poziomego, anchorY = " + anchorY.ToString("0.###"));
 
                 var horizontalPoints = new TSD.PointList();
                 foreach (var x in xCoordinates)
@@ -238,6 +400,8 @@ namespace HFT_DrawingHelper {
                 var anchorX = options.VerticalPlacement == VerticalDimensionPlacement.Right
                     ? selectedBounds.MaxX
                     : selectedBounds.MinX;
+
+                LogDebug("Tworzenie wymiaru pionowego, anchorX = " + anchorX.ToString("0.###"));
 
                 var verticalPoints = new TSD.PointList();
                 foreach (var y in yCoordinates)
@@ -272,6 +436,17 @@ namespace HFT_DrawingHelper {
             double offsetMillimeters,
             DimensionType dimensionType
         ) {
+            LogDebug("=== CreateDimensionSet ===");
+            LogDebug("dimensionType = " + dimensionType);
+            LogDebug("dimensionPoints.Count = " + dimensionPoints.Count);
+            LogDebug(string.Format(
+                "directionVector = ({0:0.###}, {1:0.###}, {2:0.###})",
+                directionVector.X,
+                directionVector.Y,
+                directionVector.Z
+            ));
+            LogDebug("offsetMillimeters = " + offsetMillimeters.ToString("0.###"));
+
             if (dimensionType == DimensionType.Straight) {
                 var straightHandler = new TSD.StraightDimensionSetHandler();
                 straightHandler.CreateDimensionSet(
@@ -280,10 +455,15 @@ namespace HFT_DrawingHelper {
                     directionVector,
                     offsetMillimeters
                 );
+                LogDebug("Utworzono StraightDimensionSet.");
                 return;
             }
 
             var arcPoints = ComputeArcPoints(dimensionPoints, directionVector);
+            LogPoint("arcStart", arcPoints.Item1);
+            LogPoint("arcMid", arcPoints.Item2);
+            LogPoint("arcEnd", arcPoints.Item3);
+
             var curvedHandler = new TSD.CurvedDimensionSetHandler();
             curvedHandler.CreateCurvedDimensionSetOrthogonal(
                 selectedView,
@@ -293,6 +473,7 @@ namespace HFT_DrawingHelper {
                 dimensionPoints,
                 offsetMillimeters
             );
+            LogDebug("Utworzono CurvedDimensionSet.");
         }
 
         private static Tuple<TSG.Point, TSG.Point, TSG.Point> ComputeArcPoints(
@@ -314,6 +495,9 @@ namespace HFT_DrawingHelper {
             var spanY = lastPoint.Y - firstPoint.Y;
             var span = Math.Sqrt(spanX * spanX + spanY * spanY);
             var arcDepth = span * CurvedDimensionArcDepthRatio;
+
+            LogDebug("ComputeArcPoints: span = " + span.ToString("0.###") +
+                     ", arcDepth = " + arcDepth.ToString("0.###"));
 
             return Tuple.Create(
                 new TSG.Point(firstPoint.X, firstPoint.Y, 0),
@@ -355,7 +539,6 @@ namespace HFT_DrawingHelper {
 
             foreach (var partWithBounds in drawingParts) {
                 if (!(partWithBounds?.DrawingPart?.GetView() is TSD.View currentView)) return null;
-
                 if (!AreViewsEquivalent(commonView, currentView)) return null;
             }
 
@@ -429,12 +612,6 @@ namespace HFT_DrawingHelper {
             }
         }
 
-        /// <summary>
-        ///     LoftedPlate: X-sweep — pionowe płaszczyzny przy różnych X,
-        ///     zbiera min/max Y z punktów przecięcia → górny+dolny łańcuch.
-        ///     To jedyna metoda która zachowuje wklęsły profil (np. "dip" belki mostowej),
-        ///     bo próbkuje WZDŁUŻ długości płyty a nie przez jej grubość.
-        /// </summary>
         private static List<TSG.Point> GetLoftedPlateOutlinePoints(TSM.Solid solid) {
             var points = new List<TSG.Point>();
             if (solid == null) return points;
@@ -442,58 +619,58 @@ namespace HFT_DrawingHelper {
             var minX = solid.MinimumPoint.X;
             var maxX = solid.MaximumPoint.X;
 
+            LogDebug("GetLoftedPlateOutlinePoints");
+            LogDebug("LoftedPlate minX = " + minX.ToString("0.###") + ", maxX = " + maxX.ToString("0.###"));
+
             if (maxX - minX < 1e-6) return points;
 
-            // Zawsze próbkuj minX i maxX, plus równomierne kroki pomiędzy
             var xValues = new List<double> { minX };
             for (var x = minX + LoftedPlateXStepMillimeters; x < maxX; x += LoftedPlateXStepMillimeters)
                 xValues.Add(x);
             xValues.Add(maxX);
 
+            LogValuesSummary("LoftedPlate xValues", xValues);
+
             foreach (var xValue in xValues) {
-                // Pionowa płaszczyzna przy X = xValue: normalna w kierunku X
-                // Trzy punkty definiujące płaszczyznę YZ przy danym X
                 var enumerator = solid.GetAllIntersectionPoints(
                     new TSG.Point(xValue, 0, 0),
                     new TSG.Point(xValue, 1, 0),
                     new TSG.Point(xValue, 0, 1)
                 );
 
+                var localCount = 0;
+
                 while (enumerator.MoveNext()) {
                     if (!(enumerator.Current is TSG.Point p)) continue;
-                    // Zachowaj X z próbki (nie z punktu przecięcia który może się lekko różnić)
                     points.Add(new TSG.Point(xValue, p.Y, 0));
+                    localCount++;
                 }
+
+                LogDebug("x = " + xValue.ToString("0.###") + " -> intersections = " + localCount);
             }
 
+            LogPointsSummary("LoftedPlate raw points", points);
             return points;
         }
 
-        /// <summary>
-        ///     Kroi solid przy maxZ — przedniej ścianie solida w view CS.
-        ///     W Tekla view CS oś Z rośnie w stronę obserwatora, więc maxZ
-        ///     to ściana najbliżej obserwatora — dokładnie to co widać na widoku.
-        ///     Fallback: jeśli maxZ nie trafia w solid, próbuje maxZ - mały offset.
-        /// </summary>
         private static List<TSG.Point> GetSolidOutlinePointsByZSweep(TSM.Solid solid) {
             if (solid == null) return new List<TSG.Point>();
 
             var maxZ = solid.MaximumPoint.Z;
+            LogDebug("GetSolidOutlinePointsByZSweep: maxZ = " + maxZ.ToString("0.###"));
 
             var points = GetIntersectionPointsAtLocalZ(solid, maxZ);
 
-            if (points.Count == 0)
+            if (points.Count == 0) {
+                LogDebug("Brak punktów dla maxZ, próbuję maxZ - 1.0");
                 points = GetIntersectionPointsAtLocalZ(solid, maxZ - 1.0);
+            }
 
-            return RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
+            points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
+            LogPointsSummary("GetSolidOutlinePointsByZSweep points", points);
+            return points;
         }
 
-        /// <summary>
-        ///     Usuwa punkty koliniarne z polilinii — jeśli kąt między dwoma sąsiednimi
-        ///     segmentami jest mniejszy niż tolerancja (punkty leżą na jednej prostej),
-        ///     środkowy punkt jest zbędny i zostaje usunięty.
-        ///     Działa zarówno dla otwartych jak i zamkniętych polilinii.
-        /// </summary>
         private static List<TSG.Point> SimplifyPolyline(
             List<TSG.Point> points,
             double collinearAngleToleranceDegrees = 0.5
@@ -523,24 +700,19 @@ namespace HFT_DrawingHelper {
 
                 var angleDegrees = Math.Acos(dot) * 180.0 / Math.PI;
 
-                // Kąt bliski 0° = punkty koliniarne = środkowy punkt zbędny
                 if (angleDegrees > collinearAngleToleranceDegrees)
                     result.Add(curr);
             }
 
             result.Add(points[points.Count - 1]);
+
+            LogDebug("SimplifyPolyline: before = " + points.Count + ", after = " + result.Count);
             return result;
         }
 
-        /// <summary>
-        ///     Buduje zamkniętą polilinię obrysu z listy punktów metodą górny/dolny łańcuch.
-        ///     Punkty muszą być już posortowane po X (jak z X-sweep).
-        ///     Nie używa smoothingu — zachowuje kształt wklęsły.
-        /// </summary>
         private static List<TSG.Point> BuildUpperLowerChainOutline(List<TSG.Point> points) {
             if (points == null || points.Count < 2) return null;
 
-            // Grupuj po X, zbierz min/max Y
             var byX = points
                 .GroupBy(p => p.X)
                 .OrderBy(g => g.Key)
@@ -551,11 +723,14 @@ namespace HFT_DrawingHelper {
             var upper = byX.Select(g => new TSG.Point(g.Key, g.Max(p => p.Y), 0)).ToList();
             var lower = byX.Select(g => new TSG.Point(g.Key, g.Min(p => p.Y), 0)).ToList();
 
-            // Górny łańcuch lewo→prawo + dolny prawo→lewo = zamknięty obrys
             var outline = new List<TSG.Point>();
             outline.AddRange(upper);
             outline.AddRange(Enumerable.Reverse(lower));
-            outline.Add(new TSG.Point(upper[0].X, upper[0].Y, 0)); // zamknięcie
+            outline.Add(new TSG.Point(upper[0].X, upper[0].Y, 0));
+
+            LogPointsSummary("Upper chain", upper);
+            LogPointsSummary("Lower chain", lower);
+            LogPointsSummary("Outline before simplify", outline);
 
             return outline;
         }
@@ -583,19 +758,37 @@ namespace HFT_DrawingHelper {
                     var solid = modelPart.GetSolid();
                     if (solid == null) continue;
 
+                    LogDebug(new string('-', 80));
+                    LogDebug("Part: " + modelPart.Name + " | Type: " + modelPart.GetType().FullName);
+                    LogPoint("solid.MinimumPoint", solid.MinimumPoint);
+                    LogPoint("solid.MaximumPoint", solid.MaximumPoint);
+
                     if (modelPart is TSM.LoftedPlate) {
-                        var pts = GetLoftedPlateOutlinePoints(solid);
-                        if (pts.Count < 2) continue;
-                        var outline = BuildUpperLowerChainOutline(pts);
-                        if (outline == null || outline.Count < 3) continue;
+                        LogDebug("Tryb: LoftedPlate");
+                        var points = GetLoftedPlateOutlinePoints(solid);
+                        if (points.Count < 2) {
+                            LogDebug("Za mało punktów LoftedPlate.");
+                            continue;
+                        }
+
+                        var outline = BuildUpperLowerChainOutline(points);
+                        if (outline == null || outline.Count < 3) {
+                            LogDebug("Outline LoftedPlate == null lub < 3");
+                            continue;
+                        }
+
                         outline = SimplifyPolyline(outline);
-                        if (outline == null || outline.Count < 3) continue;
+                        if (outline == null || outline.Count < 3) {
+                            LogDebug("Outline LoftedPlate po simplify == null lub < 3");
+                            continue;
+                        }
+
+                        LogPointsSummary("LoftedPlate final outline", outline);
                         DrawOutlineAsPolyline(view, outline, TSD.DrawingColors.Green);
                     }
                     else {
-                        // WP = DisplayCS → Z = głębia widoku, X,Y = współrzędne papieru.
-                        // Nie ma potrzeby żadnej transformacji — punkty przecięcia są
-                        // bezpośrednio w układzie rysunkowym.
+                        LogDebug("Tryb: zwykły Part");
+
                         var frontZ = solid.MaximumPoint.Z;
                         var backZ = solid.MinimumPoint.Z;
                         const double inward = 1.0;
@@ -610,8 +803,16 @@ namespace HFT_DrawingHelper {
                             backZ = centerZ;
                         }
 
-                        DrawHullOutline(view, GetIntersectionPointsAtLocalZ(solid, frontZ), TSD.DrawingColors.Red);
-                        DrawHullOutline(view, GetIntersectionPointsAtLocalZ(solid, backZ), TSD.DrawingColors.Green);
+                        LogDebug("frontZ = " + frontZ.ToString("0.###") + ", backZ = " + backZ.ToString("0.###"));
+
+                        var frontPoints = GetIntersectionPointsAtLocalZ(solid, frontZ);
+                        var backPoints = GetIntersectionPointsAtLocalZ(solid, backZ);
+
+                        LogPointsSummary("frontPoints", frontPoints);
+                        LogPointsSummary("backPoints", backPoints);
+
+                        DrawHullOutline(view, frontPoints, TSD.DrawingColors.Red);
+                        DrawHullOutline(view, backPoints, TSD.DrawingColors.Green);
                     }
 
                     var label = !string.IsNullOrWhiteSpace(modelPart.Name)
@@ -639,18 +840,33 @@ namespace HFT_DrawingHelper {
             List<TSG.Point> points,
             TSD.DrawingColors color
         ) {
-            if (points == null || points.Count < 3) return;
+            if (points == null || points.Count < 3) {
+                LogDebug("DrawHullOutline: za mało punktów.");
+                return;
+            }
 
             points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
+            LogPointsSummary("DrawHullOutline unique points", points);
+
             var hull = BuildConvexHull2D(points);
-            if (hull.Count < 3) return;
+            LogPointsSummary("Convex hull", hull);
+
+            if (hull.Count < 3) {
+                LogDebug("Convex hull ma mniej niż 3 punkty.");
+                return;
+            }
 
             var outline = new List<TSG.Point>(hull) {
                 new TSG.Point(hull[0].X, hull[0].Y, 0)
             };
-            outline = SimplifyPolyline(outline);
-            if (outline == null || outline.Count < 3) return;
 
+            outline = SimplifyPolyline(outline);
+            if (outline == null || outline.Count < 3) {
+                LogDebug("Outline po simplify ma mniej niż 3 punkty.");
+                return;
+            }
+
+            LogPointsSummary("Final hull outline", outline);
             DrawOutlineAsPolyline(view, outline, color);
         }
 
@@ -659,11 +875,16 @@ namespace HFT_DrawingHelper {
             List<TSG.Point> outline,
             TSD.DrawingColors color
         ) {
-            if (outline == null || outline.Count < 2) return;
+            if (outline == null || outline.Count < 2) {
+                LogDebug("DrawOutlineAsPolyline: outline == null lub < 2");
+                return;
+            }
 
             var polylinePoints = new TSD.PointList();
             foreach (var pt in outline)
                 polylinePoints.Add(new TSG.Point(pt.X, pt.Y, 0));
+
+            LogDebug("Rysuję polyline, points = " + outline.Count + ", color = " + color);
 
             var polyline = new TSD.Polyline(view, polylinePoints);
             polyline.Attributes.Line.Color = color;
@@ -696,6 +917,9 @@ namespace HFT_DrawingHelper {
                 var bounds = GetPartAabbInViewSpace(view, modelPart);
                 if (bounds == null) continue;
 
+                LogDebug("GetPartBoundsFromView -> " + modelPart.Name + " ID=" + id);
+                LogBounds("view part bounds", bounds);
+
                 result.Add(bounds);
             }
 
@@ -716,6 +940,9 @@ namespace HFT_DrawingHelper {
 
                 var bounds = GetPartAabbInViewSpace(view, modelPart);
                 if (bounds == null) continue;
+
+                LogDebug("GetPartBoundsFromDrawingParts -> " + modelPart.Name + " ID=" + modelPart.Identifier.ID);
+                LogBounds("selected part bounds", bounds);
 
                 result.Add(bounds);
             }

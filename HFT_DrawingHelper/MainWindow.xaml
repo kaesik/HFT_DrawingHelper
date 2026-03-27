@@ -5,398 +5,304 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="HFT Drawing Helper"
+        Width="420"
+        SizeToContent="Height"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
-        SizeToContent="WidthAndHeight"
-        MinWidth="760"
-        MinHeight="520"
-        MaxWidth="1100"
-        MaxHeight="900"
-        WindowStartupLocation="CenterScreen"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
         FontFamily="Segoe UI Variable, Segoe UI">
 
-    <Window.Resources>
-        <Style x:Key="IconButton" TargetType="Button">
-            <Setter Property="Width" Value="36" />
-            <Setter Property="Height" Value="36" />
-            <Setter Property="Margin" Value="0" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="FontSize" Value="14" />
-            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="BorderBrush" Value="Transparent" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
-                                CornerRadius="4">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource SurfaceHoverBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource BorderColorBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.45" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="CloseButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#C42B1C" />
-                    <Setter Property="Foreground" Value="White" />
-                </Trigger>
-                <Trigger Property="IsPressed" Value="True">
-                    <Setter Property="Background" Value="#A4262C" />
-                    <Setter Property="Foreground" Value="White" />
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="PrimaryButtonStyle" TargetType="Button">
-            <Setter Property="Height" Value="36" />
-            <Setter Property="MinWidth" Value="150" />
-            <Setter Property="Padding" Value="14,0" />
-            <Setter Property="FontSize" Value="13" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-            <Setter Property="Background" Value="{DynamicResource ControlBgBrush}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource BorderColorBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="4">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource ControlHoverBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource SurfaceHoverBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.45" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="WatermarkTextBoxStyle" TargetType="TextBox">
-            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-            <Setter Property="Background" Value="{DynamicResource ControlBgBrush}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource BorderColorBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="10,7" />
-            <Setter Property="FontSize" Value="13" />
-            <Setter Property="CaretBrush" Value="{DynamicResource TextPrimaryBrush}" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="TextBox">
-                        <Grid>
-                            <Border x:Name="Border"
-                                    Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="4"
-                                    SnapsToDevicePixels="True">
-                                <ScrollViewer x:Name="PART_ContentHost"
-                                              Margin="{TemplateBinding Padding}" />
-                            </Border>
-                            <TextBlock x:Name="Watermark"
-                                       Text="{TemplateBinding Tag}"
-                                       Foreground="{DynamicResource TextTertiaryBrush}"
-                                       Margin="{TemplateBinding Padding}"
-                                       VerticalAlignment="Center"
-                                       IsHitTestVisible="False"
-                                       Visibility="Collapsed" />
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="Text" Value="">
-                                <Setter TargetName="Watermark" Property="Visibility" Value="Visible" />
-                            </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Border" Property="BorderBrush"
-                                        Value="{DynamicResource AccentColorBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Border" Property="Opacity" Value="0.6" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="SectionLabelStyle" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="10" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
-            <Setter Property="Margin" Value="0,0,0,6" />
-        </Style>
-
-        <Style x:Key="OptionCheckBoxStyle" TargetType="CheckBox">
-            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-            <Setter Property="FontSize" Value="13" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Margin" Value="0,2,0,2" />
-        </Style>
-
-        <Style x:Key="OptionRadioButtonStyle" TargetType="RadioButton">
-            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-            <Setter Property="FontSize" Value="13" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Margin" Value="0,2,0,2" />
-        </Style>
-    </Window.Resources>
-
+    <!-- ═══════════════════════════════════════════════════
+         Window chrome — drop shadow + rounded border
+    ════════════════════════════════════════════════════ -->
     <Border Background="{DynamicResource WindowBgBrush}"
-            BorderBrush="{DynamicResource WindowBorderBrush}"
+            BorderBrush="{DynamicResource WindowBorderBrushBrush}"
             BorderThickness="1"
             CornerRadius="8">
         <Border.Effect>
-            <DropShadowEffect BlurRadius="12"
-                              ShadowDepth="2"
-                              Opacity="0.4"
-                              Color="#000000" />
+            <DropShadowEffect BlurRadius="18" ShadowDepth="3"
+                              Opacity="0.45" Color="#000000" />
         </Border.Effect>
 
         <Grid>
             <Grid.RowDefinitions>
+                <!-- Title bar -->
                 <RowDefinition Height="36" />
+                <!-- Content -->
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0"
-                  MouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
-                  Background="{DynamicResource TitleBarBgBrush}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+            <!-- ═══════════════════════════════════════════
+                 Title Bar
+            ════════════════════════════════════════════ -->
+            <Border Grid.Row="0"
+                    Background="{DynamicResource TitleBarBgBrush}"
+                    CornerRadius="7,7,0,0"
+                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="10" />
+                        <!-- Logo area -->
+                        <ColumnDefinition Width="Auto" />
+                        <!-- Title -->
+                        <ColumnDefinition Width="*" />
+                        <!-- Action buttons -->
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-                <StackPanel Orientation="Horizontal"
-                            VerticalAlignment="Center"
-                            Margin="10,0,0,0">
-                    <TextBlock Text="HFT DRAWING HELPER"
-                               FontSize="12"
+                    <!-- Logo (theme-tinted via OpacityMask) — Assets/logo.png must have Build Action = Resource -->
+                    <Rectangle Grid.Column="1"
+                               Width="32" Height="32"
+                               Fill="{DynamicResource TextPrimaryBrush}"
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               VerticalAlignment="Center">
+                        <Rectangle.OpacityMask>
+                            <ImageBrush ImageSource="pack://application:,,,/Assets/logo.png" Stretch="Uniform" />
+                        </Rectangle.OpacityMask>
+                    </Rectangle>
+
+                    <!-- App title -->
+                    <TextBlock Grid.Column="2"
+                               Text="DRAWING HELPER"
                                Foreground="{DynamicResource TextSecondaryBrush}"
+                               FontSize="12"
+                               VerticalAlignment="Center"
+                               Margin="8,0,0,0" />
+
+                    <!-- Theme toggle + Close -->
+                    <StackPanel Grid.Column="3"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Stretch">
+                        <Button x:Name="ThemeToggleButton"
+                                Style="{StaticResource IconButton}"
+                                Content="&#xE793;"
+                                ToolTip="Toggle theme"
+                                Click="ThemeToggle_Click" />
+                        <Button x:Name="CloseButton"
+                                Style="{StaticResource CloseButton}"
+                                Content="&#xE8BB;"
+                                ToolTip="Close"
+                                Click="CloseButton_Click" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ═══════════════════════════════════════════
+                 Content
+            ════════════════════════════════════════════ -->
+            <StackPanel Grid.Row="1" Margin="14,10,14,14">
+
+                <!-- ─── KRAWĘDZIE ─────────────────────── -->
+                <TextBlock Text="KRAWĘDZIE"
+                           Foreground="{DynamicResource TextTertiaryBrush}"
+                           FontSize="10"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,6" />
+
+                <Button x:Name="DrawEdgesButton"
+                        Content="Rysuj krawędzie"
+                        Style="{StaticResource PrimaryButton}"
+                        HorizontalAlignment="Stretch"
+                        Height="32"
+                        Click="DrawEdgesButton_Click" />
+
+                <!-- Divider -->
+                <Border Height="1"
+                        Background="{DynamicResource DividerColorBrush}"
+                        Margin="0,14,0,14" />
+
+                <!-- ─── PRZEKROJE ─────────────────────── -->
+                <TextBlock Text="PRZEKROJE"
+                           Foreground="{DynamicResource TextTertiaryBrush}"
+                           FontSize="10"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,6" />
+
+                <TextBox x:Name="EdgeNumbersTextBox"
+                         Style="{StaticResource HftTextBox}"
+                         Tag="Numery krawędzi (np. 1,3-5)"
+                         Height="34"
+                         HorizontalAlignment="Stretch"
+                         Margin="0,0,0,8" />
+
+                <Button x:Name="AddSectionsButton"
+                        Content="Dodaj przekroje"
+                        Style="{StaticResource PrimaryButton}"
+                        HorizontalAlignment="Stretch"
+                        Height="32"
+                        Click="AddSectionsButton_Click" />
+
+                <!-- Divider -->
+                <Border Height="1"
+                        Background="{DynamicResource DividerColorBrush}"
+                        Margin="0,14,0,14" />
+
+                <!-- ─── WYMIAROWANIE ──────────────────── -->
+                <TextBlock Text="WYMIAROWANIE"
+                           Foreground="{DynamicResource TextTertiaryBrush}"
+                           FontSize="10"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,6" />
+
+                <TextBox x:Name="ElementsToDimensionTextBox"
+                         Style="{StaticResource HftTextBox}"
+                         Tag="Name lub ASSEMBLY_POS"
+                         Height="34"
+                         HorizontalAlignment="Stretch"
+                         Margin="0,0,0,10" />
+
+                <!-- Row: Typ wymiaru -->
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="Typ"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               FontSize="11"
                                VerticalAlignment="Center" />
-                </StackPanel>
-
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <Button x:Name="ThemeToggleButton"
-                            Style="{StaticResource IconButton}"
-                            Click="ThemeToggle_Click"
-                            ToolTip="Przełącz motyw">
-                        <TextBlock x:Name="ThemeToggleIcon"
-                                   Text="&#xE793;"
-                                   FontFamily="Segoe MDL2 Assets"
-                                   Foreground="{DynamicResource TextPrimaryBrush}" />
-                    </Button>
-
-                    <Button Style="{StaticResource CloseButton}"
-                            Click="CloseButton_Click"
-                            ToolTip="Zamknij">
-                        <TextBlock Text="&#xE8BB;"
-                                   FontFamily="Segoe MDL2 Assets" />
-                    </Button>
-                </StackPanel>
-            </Grid>
-
-            <StackPanel Grid.Row="1" Margin="16,10,16,16">
-                <Border Height="1"
-                        Background="{DynamicResource DividerColorBrush}"
-                        Margin="0,0,0,12" />
-
-                <TextBlock Text="MODEL"
-                           Style="{StaticResource SectionLabelStyle}" />
-
-                <TextBlock x:Name="ModelDrawingLabel"
-                           Text="Model"
-                           FontSize="11"
-                           Foreground="{DynamicResource TextPrimaryBrush}"
-                           TextWrapping="Wrap"
-                           Margin="0,0,0,14" />
-
-                <Border Height="1"
-                        Background="{DynamicResource DividerColorBrush}"
-                        Margin="0,0,0,12" />
-
-                <TextBlock Text="KRAWĘDZIE I PRZEKROJE"
-                           Style="{StaticResource SectionLabelStyle}" />
-
-                <Grid Margin="0,0,0,14">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="12" />
-                        <ColumnDefinition Width="170" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="36" />
-                        <RowDefinition Height="8" />
-                        <RowDefinition Height="36" />
-                    </Grid.RowDefinitions>
-
-                    <TextBox x:Name="EdgeNumbersTextBox"
-                             Grid.Column="0"
-                             Grid.Row="0"
-                             Grid.RowSpan="3"
-                             Style="{StaticResource WatermarkTextBoxStyle}"
-                             Tag="Wpisz numery krawędzi (np. 1,3-5)"
-                             VerticalAlignment="Stretch" />
-
-                    <Button x:Name="DrawEdgesButton"
-                            Grid.Column="2"
-                            Grid.Row="0"
-                            Style="{StaticResource PrimaryButtonStyle}"
-                            Content="Rysuj krawędzie"
-                            Click="DrawEdgesButton_Click" />
-
-                    <Button x:Name="AddSectionsButton"
-                            Grid.Column="2"
-                            Grid.Row="2"
-                            Style="{StaticResource PrimaryButtonStyle}"
-                            Content="Dodaj przekroje"
-                            Click="AddSectionsButton_Click" />
-                </Grid>
-
-                <Border Height="1"
-                        Background="{DynamicResource DividerColorBrush}"
-                        Margin="0,0,0,12" />
-
-                <TextBlock Text="WYMIAROWANIE ASSEMBLY"
-                           Style="{StaticResource SectionLabelStyle}" />
-
-                <Grid Margin="0,0,0,12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="12" />
-                        <ColumnDefinition Width="170" />
-                    </Grid.ColumnDefinitions>
-
-                    <TextBox x:Name="ElementsToDimensionTextBox"
-                             Grid.Column="0"
-                             Height="36"
-                             Style="{StaticResource WatermarkTextBoxStyle}"
-                             Tag="Wpisz Name elementów do zwymiarowania" />
-
-                    <Button x:Name="AddDimensionsButton"
-                            Grid.Column="2"
-                            Style="{StaticResource PrimaryButtonStyle}"
-                            Content="Dodaj wymiary"
-                            Click="AddDimensionsButton_Click" />
-                </Grid>
-
-                <Border BorderBrush="{DynamicResource BorderColorBrush}"
-                        BorderThickness="1"
-                        CornerRadius="4"
-                        Background="{DynamicResource ControlBgBrush}"
-                        Padding="12">
-                    <Grid>
+                    <Grid Grid.Column="1">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="140" />
-                            <ColumnDefinition Width="160" />
-                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="110" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="30" />
-                            <RowDefinition Height="30" />
-                            <RowDefinition Height="30" />
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Grid.Column="0"
-                                   Grid.Row="0"
-                                   Text="Typ:"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   VerticalAlignment="Center"
-                                   FontSize="13" />
-
-                        <RadioButton x:Name="StraightDimensionRadioButton"
-                                     Grid.Column="1"
-                                     Grid.Row="0"
-                                     Content="Prostoliniowy"
-                                     GroupName="DimensionType"
-                                     IsChecked="True"
-                                     Style="{StaticResource OptionRadioButtonStyle}" />
-
                         <RadioButton x:Name="CurvedDimensionRadioButton"
-                                     Grid.Column="2"
-                                     Grid.Row="0"
-                                     Content="Zakrzywiony"
-                                     GroupName="DimensionType"
-                                     Style="{StaticResource OptionRadioButtonStyle}" />
+                                     Grid.Column="0"
+                                     Content="Łukowy"
+                                     Style="{StaticResource HftRadioButton}"
+                                     IsChecked="True" />
+                        <RadioButton Grid.Column="1"
+                                     Content="Prostoliniowy"
+                                     Style="{StaticResource HftRadioButton}" />
+                    </Grid>
+                </Grid>
 
+                <!-- Row: Umiejscowienie H -->
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="Poziom"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               FontSize="11"
+                               VerticalAlignment="Center" />
+                    <Grid Grid.Column="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <RadioButton x:Name="DimensionAboveRadioButton"
+                                     Grid.Column="0"
+                                     Content="Powyżej"
+                                     Style="{StaticResource HftRadioButton}"
+                                     GroupName="HPlacement"
+                                     IsChecked="True" />
+                        <RadioButton Grid.Column="1"
+                                     Content="Poniżej"
+                                     Style="{StaticResource HftRadioButton}"
+                                     GroupName="HPlacement" />
+                    </Grid>
+                </Grid>
+
+                <!-- Row: Umiejscowienie V -->
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="Pion"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               FontSize="11"
+                               VerticalAlignment="Center" />
+                    <Grid Grid.Column="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <RadioButton x:Name="DimensionRightRadioButton"
+                                     Grid.Column="0"
+                                     Content="Prawa"
+                                     Style="{StaticResource HftRadioButton}"
+                                     GroupName="VPlacement"
+                                     IsChecked="True" />
+                        <RadioButton Grid.Column="1"
+                                     Content="Lewa"
+                                     Style="{StaticResource HftRadioButton}"
+                                     GroupName="VPlacement" />
+                    </Grid>
+                </Grid>
+
+                <!-- Row: Co tworzyć -->
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="Utwórz"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               FontSize="11"
+                               VerticalAlignment="Center" />
+                    <Grid Grid.Column="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
                         <CheckBox x:Name="HorizontalDimensionCheckBox"
                                   Grid.Column="0"
-                                  Grid.Row="1"
                                   Content="Poziomy"
-                                  IsChecked="True"
-                                  Style="{StaticResource OptionCheckBoxStyle}" />
-
-                        <RadioButton x:Name="DimensionBelowRadioButton"
-                                     Grid.Column="1"
-                                     Grid.Row="1"
-                                     Content="Dół"
-                                     GroupName="HorizontalDimensionPlacement"
-                                     IsChecked="True"
-                                     IsEnabled="{Binding IsChecked, ElementName=HorizontalDimensionCheckBox}"
-                                     Style="{StaticResource OptionRadioButtonStyle}" />
-
-                        <RadioButton x:Name="DimensionAboveRadioButton"
-                                     Grid.Column="2"
-                                     Grid.Row="1"
-                                     Content="Góra"
-                                     GroupName="HorizontalDimensionPlacement"
-                                     IsEnabled="{Binding IsChecked, ElementName=HorizontalDimensionCheckBox}"
-                                     Style="{StaticResource OptionRadioButtonStyle}" />
-
+                                  Style="{StaticResource HftCheckBox}"
+                                  IsChecked="True" />
                         <CheckBox x:Name="VerticalDimensionCheckBox"
-                                  Grid.Column="0"
-                                  Grid.Row="2"
+                                  Grid.Column="1"
                                   Content="Pionowy"
-                                  IsChecked="True"
-                                  Style="{StaticResource OptionCheckBoxStyle}" />
-
-                        <RadioButton x:Name="DimensionLeftRadioButton"
-                                     Grid.Column="1"
-                                     Grid.Row="2"
-                                     Content="Lewo"
-                                     GroupName="VerticalDimensionPlacement"
-                                     IsChecked="True"
-                                     IsEnabled="{Binding IsChecked, ElementName=VerticalDimensionCheckBox}"
-                                     Style="{StaticResource OptionRadioButtonStyle}" />
-
-                        <RadioButton x:Name="DimensionRightRadioButton"
-                                     Grid.Column="2"
-                                     Grid.Row="2"
-                                     Content="Prawo"
-                                     GroupName="VerticalDimensionPlacement"
-                                     IsEnabled="{Binding IsChecked, ElementName=VerticalDimensionCheckBox}"
-                                     Style="{StaticResource OptionRadioButtonStyle}" />
+                                  Style="{StaticResource HftCheckBox}"
+                                  IsChecked="True" />
                     </Grid>
-                </Border>
+                </Grid>
+
+                <Button x:Name="AddDimensionsButton"
+                        Content="Dodaj wymiary"
+                        Style="{StaticResource PrimaryButton}"
+                        HorizontalAlignment="Stretch"
+                        Height="32"
+                        Click="AddDimensionsButton_Click" />
+
+                <!-- Divider -->
+                <Border Height="1"
+                        Background="{DynamicResource DividerColorBrush}"
+                        Margin="0,14,0,10" />
+
+                <!-- ─── Status Bar ─────────────────────── -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0"
+                               Text="Model:"
+                               Foreground="{DynamicResource TextTertiaryBrush}"
+                               FontSize="10"
+                               VerticalAlignment="Center"
+                               Margin="0,0,6,0" />
+
+                    <TextBlock x:Name="ModelDrawingLabel"
+                               Grid.Column="1"
+                               Foreground="{DynamicResource ValueHighlightBrush}"
+                               FontSize="11"
+                               FontWeight="Bold"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
+                </Grid>
+
             </StackPanel>
         </Grid>
     </Border>

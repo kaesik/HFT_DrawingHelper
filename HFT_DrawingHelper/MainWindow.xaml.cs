@@ -66,6 +66,7 @@ namespace HFT_DrawingHelper {
         }
 
         private void ThemeToggle_Click(object sender, RoutedEventArgs e) {
+            ThemeService.Toggle();
         }
 
         #region Helpers

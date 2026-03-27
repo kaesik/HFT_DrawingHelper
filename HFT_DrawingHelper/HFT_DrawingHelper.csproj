@@ -163,6 +163,7 @@
             <Generator>MSBuild:Compile</Generator>
             <SubType>Designer</SubType>
         </ApplicationDefinition>
+        <Compile Include="ThemeService.cs"/>
         <Page Include="MainWindow.xaml">
             <Generator>MSBuild:Compile</Generator>
             <SubType>Designer</SubType>
@@ -200,6 +201,7 @@
         <None Include="packages.config"/>
     </ItemGroup>
     <ItemGroup>
+        <Resource Include="Assets\logo.png"/>
         <Content Include="Resources\element_catalog_cross_section.bmp"/>
         <Content Include="Resources\element_catalog_cross_section_sketch.bmp"/>
         <Content Include="Resources\element_catalog_cross_section_user.bmp"/>

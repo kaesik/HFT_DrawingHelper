@@ -218,7 +218,7 @@ namespace HFT_DrawingHelper {
         private const double CurvedDimensionArcDepthRatio = 0.15;
         private const double DimensionMergeToleranceMillimeters = 1.0;
         private const double MinimumPartSizeForDimensionMillimeters = 20.0;
-        private const double LoftedPlateXStepMillimeters = 20.0;
+        private const double SweepStepMillimeters = 1.0;
 
         #endregion
 
@@ -612,24 +612,28 @@ namespace HFT_DrawingHelper {
             }
         }
 
-        private static List<TSG.Point> GetLoftedPlateOutlinePoints(TSM.Solid solid) {
+        private static bool ShouldUseSweepOutline(TSM.Part modelPart) {
+            return modelPart is TSM.LoftedPlate || modelPart is TSM.ContourPlate;
+        }
+
+        private static List<TSG.Point> GetSweptPlateOutlinePoints(TSM.Solid solid) {
             var points = new List<TSG.Point>();
             if (solid == null) return points;
 
             var minX = solid.MinimumPoint.X;
             var maxX = solid.MaximumPoint.X;
 
-            LogDebug("GetLoftedPlateOutlinePoints");
-            LogDebug("LoftedPlate minX = " + minX.ToString("0.###") + ", maxX = " + maxX.ToString("0.###"));
+            LogDebug("GetSweptPlateOutlinePoints");
+            LogDebug("Plate minX = " + minX.ToString("0.###") + ", maxX = " + maxX.ToString("0.###"));
 
             if (maxX - minX < 1e-6) return points;
 
             var xValues = new List<double> { minX };
-            for (var x = minX + LoftedPlateXStepMillimeters; x < maxX; x += LoftedPlateXStepMillimeters)
+            for (var x = minX + SweepStepMillimeters; x < maxX; x += SweepStepMillimeters)
                 xValues.Add(x);
             xValues.Add(maxX);
 
-            LogValuesSummary("LoftedPlate xValues", xValues);
+            LogValuesSummary("Sweep xValues", xValues);
 
             foreach (var xValue in xValues) {
                 var enumerator = solid.GetAllIntersectionPoints(
@@ -649,7 +653,8 @@ namespace HFT_DrawingHelper {
                 LogDebug("x = " + xValue.ToString("0.###") + " -> intersections = " + localCount);
             }
 
-            LogPointsSummary("LoftedPlate raw points", points);
+            points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
+            LogPointsSummary("Swept raw points", points);
             return points;
         }
 
@@ -763,27 +768,30 @@ namespace HFT_DrawingHelper {
                     LogPoint("solid.MinimumPoint", solid.MinimumPoint);
                     LogPoint("solid.MaximumPoint", solid.MaximumPoint);
 
-                    if (modelPart is TSM.LoftedPlate) {
-                        LogDebug("Tryb: LoftedPlate");
-                        var points = GetLoftedPlateOutlinePoints(solid);
+                    if (ShouldUseSweepOutline(modelPart)) {
+                        LogDebug("Tryb: sweepowany plate");
+
+                        var points = GetSweptPlateOutlinePoints(solid);
                         if (points.Count < 2) {
-                            LogDebug("Za mało punktów LoftedPlate.");
+                            LogDebug("Za mało punktów sweep.");
                             continue;
                         }
 
                         var outline = BuildUpperLowerChainOutline(points);
                         if (outline == null || outline.Count < 3) {
-                            LogDebug("Outline LoftedPlate == null lub < 3");
+                            LogDebug("Outline sweep == null lub < 3");
                             continue;
                         }
 
                         outline = SimplifyPolyline(outline);
+                        outline = RemoveNearDuplicates(outline, DuplicateToleranceMillimeters);
+
                         if (outline == null || outline.Count < 3) {
-                            LogDebug("Outline LoftedPlate po simplify == null lub < 3");
+                            LogDebug("Outline sweep po simplify == null lub < 3");
                             continue;
                         }
 
-                        LogPointsSummary("LoftedPlate final outline", outline);
+                        LogPointsSummary("Sweep final outline", outline);
                         DrawOutlineAsPolyline(view, outline, TSD.DrawingColors.Green);
                     }
                     else {

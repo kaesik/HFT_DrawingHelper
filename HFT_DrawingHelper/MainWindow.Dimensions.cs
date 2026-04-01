@@ -10,6 +10,31 @@ using TSG = Tekla.Structures.Geometry3d;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
+        #region Bounds Calculation
+
+        private static PartBounds GetAssemblyBounds(List<PartBounds> parts) {
+            if (parts == null || parts.Count == 0) return null;
+
+            var minX = double.MaxValue;
+            var minY = double.MaxValue;
+            var maxX = double.MinValue;
+            var maxY = double.MinValue;
+            var found = false;
+
+            foreach (var p in parts.Where(p => p != null)) {
+                if (p.MinX < minX) minX = p.MinX;
+                if (p.MinY < minY) minY = p.MinY;
+                if (p.MaxX > maxX) maxX = p.MaxX;
+                if (p.MaxY > maxY) maxY = p.MaxY;
+                found = true;
+            }
+
+            var result = !found ? null : new PartBounds { MinX = minX, MaxX = maxX, MinY = minY, MaxY = maxY };
+            return result;
+        }
+
+        #endregion
+
         #region Geometry Helpers
 
         private static List<double> MergeAndSort(IEnumerable<double> rawValues, double tolerance) {
@@ -37,28 +62,113 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
-        #endregion
+        private static List<TSG.Point> EnsureClosedOutline(List<TSG.Point> outline) {
+            if (outline == null || outline.Count < 2) return outline;
 
-        #region Bounds Calculation
+            var first = outline[0];
+            var last = outline[outline.Count - 1];
 
-        private static PartBounds GetAssemblyBounds(List<PartBounds> parts) {
-            if (parts == null || parts.Count == 0) return null;
+            var distance = Math.Sqrt(
+                (first.X - last.X) * (first.X - last.X) +
+                (first.Y - last.Y) * (first.Y - last.Y)
+            );
 
-            var minX = double.MaxValue;
-            var minY = double.MaxValue;
-            var maxX = double.MinValue;
-            var maxY = double.MinValue;
-            var found = false;
+            if (distance > DuplicateToleranceMillimeters)
+                outline.Add(new TSG.Point(first.X, first.Y, 0));
 
-            foreach (var p in parts.Where(p => p != null)) {
-                if (p.MinX < minX) minX = p.MinX;
-                if (p.MinY < minY) minY = p.MinY;
-                if (p.MaxX > maxX) maxX = p.MaxX;
-                if (p.MaxY > maxY) maxY = p.MaxY;
-                found = true;
+            return outline;
+        }
+
+        private static List<TSG.Point> GetOpenOutlineVertices(List<TSG.Point> outline) {
+            if (outline == null) return null;
+
+            var result = RemoveNearDuplicates(new List<TSG.Point>(outline), DuplicateToleranceMillimeters);
+            if (result == null || result.Count == 0) return result;
+
+            if (result.Count > 1) {
+                var first = result[0];
+                var last = result[result.Count - 1];
+
+                var distance = Math.Sqrt(
+                    (first.X - last.X) * (first.X - last.X) +
+                    (first.Y - last.Y) * (first.Y - last.Y)
+                );
+
+                if (distance <= DuplicateToleranceMillimeters)
+                    result.RemoveAt(result.Count - 1);
             }
 
-            var result = !found ? null : new PartBounds { MinX = minX, MaxX = maxX, MinY = minY, MaxY = maxY };
+            return result;
+        }
+
+        private static double GetCornerAngleDegrees(TSG.Point previous, TSG.Point current, TSG.Point next) {
+            var firstVectorX = current.X - previous.X;
+            var firstVectorY = current.Y - previous.Y;
+            var secondVectorX = next.X - current.X;
+            var secondVectorY = next.Y - current.Y;
+
+            var firstLength = Math.Sqrt(firstVectorX * firstVectorX + firstVectorY * firstVectorY);
+            var secondLength = Math.Sqrt(secondVectorX * secondVectorX + secondVectorY * secondVectorY);
+
+            if (firstLength < 1e-9 || secondLength < 1e-9) return 0.0;
+
+            var dot = (firstVectorX * secondVectorX + firstVectorY * secondVectorY) / (firstLength * secondLength);
+            if (dot > 1.0) dot = 1.0;
+            if (dot < -1.0) dot = -1.0;
+
+            return Math.Acos(dot) * 180.0 / Math.PI;
+        }
+
+        private static List<int> GetSignificantCornerIndices(List<TSG.Point> vertices) {
+            var result = new List<int>();
+            if (vertices == null || vertices.Count < 3) return result;
+
+            for (var i = 0; i < vertices.Count; i++) {
+                var previousIndex = i == 0 ? vertices.Count - 1 : i - 1;
+                var nextIndex = i == vertices.Count - 1 ? 0 : i + 1;
+
+                var angleDegrees = GetCornerAngleDegrees(
+                    vertices[previousIndex],
+                    vertices[i],
+                    vertices[nextIndex]
+                );
+
+                LogDebug("corner[" + i + "] angle = " + angleDegrees.ToString("0.###"));
+
+                if (angleDegrees >= SignificantCornerAngleDegrees)
+                    result.Add(i);
+            }
+
+            return result;
+        }
+
+        private static List<TSG.Point> CollectPathBetweenCorners(
+            List<TSG.Point> vertices,
+            int startIndex,
+            int endIndex
+        ) {
+            var result = new List<TSG.Point>();
+            if (vertices == null || vertices.Count == 0) return result;
+
+            var index = startIndex;
+            result.Add(vertices[index]);
+
+            while (index != endIndex) {
+                index++;
+                if (index >= vertices.Count) index = 0;
+                result.Add(vertices[index]);
+            }
+
+            return result;
+        }
+
+        private static List<TSG.Point> PrepareSegmentPath(List<TSG.Point> points) {
+            if (points == null) return null;
+
+            var result = RemoveNearDuplicates(new List<TSG.Point>(points), DuplicateToleranceMillimeters);
+            result = SimplifyPolyline(result);
+            result = RemoveNearDuplicates(result, DuplicateToleranceMillimeters);
+
             return result;
         }
 
@@ -131,7 +241,6 @@ namespace HFT_DrawingHelper {
         private static void FlushDebugSession() {
             try {
                 File.WriteAllText(_debugFilePath, DebugBuilder.ToString(), Encoding.UTF8);
-                MessageBox.Show("Zapisano debug do:\n" + _debugFilePath);
             }
             catch (Exception exception) {
                 MessageBox.Show("Nie udało się zapisać debug loga:\n" + exception.Message);
@@ -217,8 +326,9 @@ namespace HFT_DrawingHelper {
         private const double MinimumDimensionSpanMillimeters = 1.0;
         private const double CurvedDimensionArcDepthRatio = 0.15;
         private const double DimensionMergeToleranceMillimeters = 1.0;
-        private const double MinimumPartSizeForDimensionMillimeters = 20.0;
+        private const double MinimumPartSizeForDimensionMillimeters = 10.0;
         private const double SweepStepMillimeters = 1.0;
+        private const double SignificantCornerAngleDegrees = 15.0;
 
         #endregion
 
@@ -658,61 +768,98 @@ namespace HFT_DrawingHelper {
             return points;
         }
 
-        private static List<TSG.Point> GetSolidOutlinePointsByZSweep(TSM.Solid solid) {
-            if (solid == null) return new List<TSG.Point>();
-
-            var maxZ = solid.MaximumPoint.Z;
-            LogDebug("GetSolidOutlinePointsByZSweep: maxZ = " + maxZ.ToString("0.###"));
-
-            var points = GetIntersectionPointsAtLocalZ(solid, maxZ);
-
-            if (points.Count == 0) {
-                LogDebug("Brak punktów dla maxZ, próbuję maxZ - 1.0");
-                points = GetIntersectionPointsAtLocalZ(solid, maxZ - 1.0);
-            }
-
-            points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
-            LogPointsSummary("GetSolidOutlinePointsByZSweep points", points);
-            return points;
-        }
-
         private static List<TSG.Point> SimplifyPolyline(
             List<TSG.Point> points,
-            double collinearAngleToleranceDegrees = 0.5
+            double toleranceMillimeters = 0.5
         ) {
             if (points == null || points.Count < 3) return points;
 
-            var result = new List<TSG.Point> { points[0] };
+            var current = new List<TSG.Point>(points);
+            var changed = true;
 
-            for (var i = 1; i < points.Count - 1; i++) {
-                var prev = result[result.Count - 1];
-                var curr = points[i];
-                var next = points[i + 1];
+            while (changed && current.Count >= 3) {
+                changed = false;
+                var next = new List<TSG.Point>();
 
-                var dx1 = curr.X - prev.X;
-                var dy1 = curr.Y - prev.Y;
-                var dx2 = next.X - curr.X;
-                var dy2 = next.Y - curr.Y;
+                var index = 0;
+                while (index < current.Count) {
+                    var remaining = current.Count - index;
 
-                var len1 = Math.Sqrt(dx1 * dx1 + dy1 * dy1);
-                var len2 = Math.Sqrt(dx2 * dx2 + dy2 * dy2);
+                    if (remaining >= 3) {
+                        var first = current[index];
+                        var middle = current[index + 1];
+                        var last = current[index + 2];
 
-                if (len1 < 1e-9 || len2 < 1e-9) continue;
+                        var distance = GetDistanceToSegment(middle, first, last);
 
-                var dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
-                if (dot > 1.0) dot = 1.0;
-                if (dot < -1.0) dot = -1.0;
+                        if (distance <= toleranceMillimeters) {
+                            if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], first))
+                                next.Add(first);
 
-                var angleDegrees = Math.Acos(dot) * 180.0 / Math.PI;
+                            next.Add(last);
+                            changed = true;
+                        }
+                        else {
+                            if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], first))
+                                next.Add(first);
 
-                if (angleDegrees > collinearAngleToleranceDegrees)
-                    result.Add(curr);
+                            next.Add(middle);
+                            next.Add(last);
+                        }
+
+                        index += 3;
+                    }
+                    else {
+                        for (var i = index; i < current.Count; i++)
+                            if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], current[i]))
+                                next.Add(current[i]);
+
+                        break;
+                    }
+                }
+
+                current = RemoveNearDuplicates(next, DuplicateToleranceMillimeters);
             }
 
-            result.Add(points[points.Count - 1]);
+            LogDebug("SimplifyPolyline: before = " + points.Count + ", after = " + current.Count);
+            return current;
+        }
 
-            LogDebug("SimplifyPolyline: before = " + points.Count + ", after = " + result.Count);
-            return result;
+        private static double GetDistanceToSegment(TSG.Point point, TSG.Point start, TSG.Point end) {
+            var segmentX = end.X - start.X;
+            var segmentY = end.Y - start.Y;
+
+            var segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+
+            if (segmentLengthSquared < 1e-12) {
+                var distanceX = point.X - start.X;
+                var distanceY = point.Y - start.Y;
+                return Math.Sqrt(distanceX * distanceX + distanceY * distanceY);
+            }
+
+            var t = (
+                (point.X - start.X) * segmentX +
+                (point.Y - start.Y) * segmentY
+            ) / segmentLengthSquared;
+
+            if (t < 0.0) t = 0.0;
+            if (t > 1.0) t = 1.0;
+
+            var projectedX = start.X + t * segmentX;
+            var projectedY = start.Y + t * segmentY;
+
+            var dx = point.X - projectedX;
+            var dy = point.Y - projectedY;
+
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        private static bool ArePointsEqual(TSG.Point first, TSG.Point second) {
+            if (first == null || second == null) return false;
+
+            return
+                Math.Abs(first.X - second.X) <= DuplicateToleranceMillimeters &&
+                Math.Abs(first.Y - second.Y) <= DuplicateToleranceMillimeters;
         }
 
         private static List<TSG.Point> BuildUpperLowerChainOutline(List<TSG.Point> points) {
@@ -731,7 +878,6 @@ namespace HFT_DrawingHelper {
             var outline = new List<TSG.Point>();
             outline.AddRange(upper);
             outline.AddRange(Enumerable.Reverse(lower));
-            outline.Add(new TSG.Point(upper[0].X, upper[0].Y, 0));
 
             LogPointsSummary("Upper chain", upper);
             LogPointsSummary("Lower chain", lower);
@@ -768,6 +914,8 @@ namespace HFT_DrawingHelper {
                     LogPoint("solid.MinimumPoint", solid.MinimumPoint);
                     LogPoint("solid.MaximumPoint", solid.MaximumPoint);
 
+                    List<TSG.Point> outline;
+
                     if (ShouldUseSweepOutline(modelPart)) {
                         LogDebug("Tryb: sweepowany plate");
 
@@ -777,65 +925,63 @@ namespace HFT_DrawingHelper {
                             continue;
                         }
 
-                        var outline = BuildUpperLowerChainOutline(points);
+                        outline = BuildUpperLowerChainOutline(points);
                         if (outline == null || outline.Count < 3) {
                             LogDebug("Outline sweep == null lub < 3");
                             continue;
                         }
 
-                        outline = SimplifyPolyline(outline);
-                        outline = RemoveNearDuplicates(outline, DuplicateToleranceMillimeters);
+                        outline = PrepareSegmentPath(outline);
+                        outline = EnsureClosedOutline(outline);
 
-                        if (outline == null || outline.Count < 3) {
-                            LogDebug("Outline sweep po simplify == null lub < 3");
+                        if (outline == null || outline.Count < 4) {
+                            LogDebug("Outline sweep po domknięciu == null lub < 4");
                             continue;
                         }
 
                         LogPointsSummary("Sweep final outline", outline);
-                        DrawOutlineAsPolyline(view, outline, TSD.DrawingColors.Green);
                     }
                     else {
-                        LogDebug("Tryb: zwykły Part");
+                        LogDebug("Tryb: zwykły Part - tylko zielony przekrój");
 
-                        var frontZ = solid.MaximumPoint.Z;
                         var backZ = solid.MinimumPoint.Z;
                         const double inward = 1.0;
 
-                        if (frontZ - backZ > inward * 2) {
-                            frontZ -= inward;
+                        if (solid.MaximumPoint.Z - solid.MinimumPoint.Z > inward * 2)
                             backZ += inward;
-                        }
-                        else {
-                            var centerZ = (frontZ + backZ) * 0.5;
-                            frontZ = centerZ;
-                            backZ = centerZ;
-                        }
+                        else
+                            backZ = (solid.MinimumPoint.Z + solid.MaximumPoint.Z) * 0.5;
 
-                        LogDebug("frontZ = " + frontZ.ToString("0.###") + ", backZ = " + backZ.ToString("0.###"));
+                        LogDebug("backZ = " + backZ.ToString("0.###"));
 
-                        var frontPoints = GetIntersectionPointsAtLocalZ(solid, frontZ);
                         var backPoints = GetIntersectionPointsAtLocalZ(solid, backZ);
-
-                        LogPointsSummary("frontPoints", frontPoints);
                         LogPointsSummary("backPoints", backPoints);
 
-                        DrawHullOutline(view, frontPoints, TSD.DrawingColors.Red);
-                        DrawHullOutline(view, backPoints, TSD.DrawingColors.Green);
+                        if (backPoints == null || backPoints.Count < 3) {
+                            LogDebug("Za mało punktów backPoints.");
+                            continue;
+                        }
+
+                        backPoints = RemoveNearDuplicates(backPoints, DuplicateToleranceMillimeters);
+                        outline = BuildConvexHull2D(backPoints);
+
+                        if (outline == null || outline.Count < 3) {
+                            LogDebug("Hull backPoints == null lub < 3");
+                            continue;
+                        }
+
+                        outline = PrepareSegmentPath(outline);
+                        outline = EnsureClosedOutline(outline);
+
+                        if (outline == null || outline.Count < 4) {
+                            LogDebug("Outline back po domknięciu == null lub < 4");
+                            continue;
+                        }
+
+                        LogPointsSummary("Back final outline", outline);
                     }
 
-                    var label = !string.IsNullOrWhiteSpace(modelPart.Name)
-                        ? modelPart.Name
-                        : modelPart.GetType().Name;
-
-                    new TSD.Text(
-                        view,
-                        new TSG.Point(
-                            (solid.MinimumPoint.X + solid.MaximumPoint.X) / 2.0,
-                            (solid.MinimumPoint.Y + solid.MaximumPoint.Y) / 2.0,
-                            0
-                        ),
-                        label
-                    ).Insert();
+                    DrawOutlineByAngleType(view, outline);
                 }
             }
             finally {
@@ -843,56 +989,137 @@ namespace HFT_DrawingHelper {
             }
         }
 
-        private static void DrawHullOutline(
+        private static void DrawOutlineByAngleType(TSD.View view, List<TSG.Point> outline) {
+            if (view == null || outline == null || outline.Count < 2) {
+                LogDebug("DrawOutlineByAngleType: outline == null lub < 2");
+                return;
+            }
+
+            var vertices = GetOpenOutlineVertices(outline);
+            if (vertices == null || vertices.Count < 2) {
+                LogDebug("DrawOutlineByAngleType: vertices == null lub < 2");
+                return;
+            }
+
+            LogPointsSummary("Open outline vertices", vertices);
+
+            if (vertices.Count == 2) {
+                LogDebug("DrawOutlineByAngleType: outline ma tylko 2 punkty -> rysuję linię.");
+                DrawStraightSegmentPrimitive(view, vertices[0], vertices[1], TSD.DrawingColors.Green);
+                return;
+            }
+
+            var significantCornerIndices = GetSignificantCornerIndices(vertices);
+            LogDebug("Significant corners = " + significantCornerIndices.Count);
+
+            if (significantCornerIndices.Count == 0) {
+                DrawPolylinePrimitive(view, vertices, TSD.DrawingColors.Green);
+                return;
+            }
+
+            if (significantCornerIndices.Count == 1) {
+                DrawPolylinePrimitive(view, vertices, TSD.DrawingColors.Green);
+                return;
+            }
+
+            for (var i = 0; i < significantCornerIndices.Count; i++) {
+                var startIndex = significantCornerIndices[i];
+                var endIndex = significantCornerIndices[(i + 1) % significantCornerIndices.Count];
+
+                var path = CollectPathBetweenCorners(vertices, startIndex, endIndex);
+                path = PrepareSegmentPath(path);
+
+                if (path == null || path.Count < 2) continue;
+
+                LogPointsSummary("Path " + i, path);
+
+                if (path.Count == 2)
+                    DrawStraightSegmentPrimitive(view, path[0], path[1], TSD.DrawingColors.Red);
+                else
+                    DrawPolylinePrimitive(view, path, TSD.DrawingColors.Green);
+            }
+        }
+
+        private static void DrawStraightSegmentPrimitive(
+            TSD.View view,
+            TSG.Point startPoint,
+            TSG.Point endPoint,
+            TSD.DrawingColors color
+        ) {
+            if (view == null || startPoint == null || endPoint == null) return;
+
+            var distance = Math.Sqrt(
+                (startPoint.X - endPoint.X) * (startPoint.X - endPoint.X) +
+                (startPoint.Y - endPoint.Y) * (startPoint.Y - endPoint.Y)
+            );
+
+            if (distance <= DuplicateToleranceMillimeters) {
+                LogDebug("DrawStraightSegmentPrimitive: odcinek za krótki.");
+                return;
+            }
+
+            var points = new TSD.PointList {
+                new TSG.Point(startPoint.X, startPoint.Y, 0),
+                new TSG.Point(endPoint.X, endPoint.Y, 0)
+            };
+
+            LogPoint("Red start", startPoint);
+            LogPoint("Red end", endPoint);
+
+            var polyline = new TSD.Polyline(view, points);
+            polyline.Attributes.Line.Color = color;
+            polyline.Insert();
+        }
+
+        private static void DrawPolylinePrimitive(
             TSD.View view,
             List<TSG.Point> points,
             TSD.DrawingColors color
         ) {
-            if (points == null || points.Count < 3) {
-                LogDebug("DrawHullOutline: za mało punktów.");
+            if (view == null || points == null || points.Count < 2) {
+                LogDebug("DrawPolylinePrimitive: points == null lub < 2");
                 return;
             }
 
-            points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
-            LogPointsSummary("DrawHullOutline unique points", points);
+            var cleanedPoints = RemoveNearDuplicates(
+                new List<TSG.Point>(points),
+                DuplicateToleranceMillimeters
+            );
 
-            var hull = BuildConvexHull2D(points);
-            LogPointsSummary("Convex hull", hull);
-
-            if (hull.Count < 3) {
-                LogDebug("Convex hull ma mniej niż 3 punkty.");
+            if (cleanedPoints == null || cleanedPoints.Count < 2) {
+                LogDebug("DrawPolylinePrimitive: cleanedPoints == null lub < 2");
                 return;
             }
 
-            var outline = new List<TSG.Point>(hull) {
-                new TSG.Point(hull[0].X, hull[0].Y, 0)
-            };
-
-            outline = SimplifyPolyline(outline);
-            if (outline == null || outline.Count < 3) {
-                LogDebug("Outline po simplify ma mniej niż 3 punkty.");
+            if (cleanedPoints.Count == 2) {
+                LogDebug("DrawPolylinePrimitive: wykryto 2 punkty -> rysuję zwykłą linię.");
+                DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
                 return;
             }
 
-            LogPointsSummary("Final hull outline", outline);
-            DrawOutlineAsPolyline(view, outline, color);
-        }
+            if (cleanedPoints.Count == 3) {
+                var first = cleanedPoints[0];
+                var last = cleanedPoints[cleanedPoints.Count - 1];
 
-        private static void DrawOutlineAsPolyline(
-            TSD.View view,
-            List<TSG.Point> outline,
-            TSD.DrawingColors color
-        ) {
-            if (outline == null || outline.Count < 2) {
-                LogDebug("DrawOutlineAsPolyline: outline == null lub < 2");
-                return;
+                var distance = Math.Sqrt(
+                    (first.X - last.X) * (first.X - last.X) +
+                    (first.Y - last.Y) * (first.Y - last.Y)
+                );
+
+                if (distance <= DuplicateToleranceMillimeters) {
+                    LogDebug("DrawPolylinePrimitive: po domknięciu są tylko 2 unikalne punkty -> rysuję zwykłą linię.");
+                    DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
+                    return;
+                }
             }
 
             var polylinePoints = new TSD.PointList();
-            foreach (var pt in outline)
-                polylinePoints.Add(new TSG.Point(pt.X, pt.Y, 0));
+            foreach (var point in cleanedPoints)
+                polylinePoints.Add(new TSG.Point(point.X, point.Y, 0));
 
-            LogDebug("Rysuję polyline, points = " + outline.Count + ", color = " + color);
+            LogPoint("Polyline start", cleanedPoints.First());
+            LogPoint("Polyline end", cleanedPoints.Last());
+            LogDebug("Rysuję polyline, points = " + cleanedPoints.Count + ", color = " + color);
 
             var polyline = new TSD.Polyline(view, polylinePoints);
             polyline.Attributes.Line.Color = color;

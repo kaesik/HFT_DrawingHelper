@@ -10,27 +10,105 @@ using TSG = Tekla.Structures.Geometry3d;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
+        #region Main Dimension Flow
+
+        private static DimensionGeometrySnapshot BuildDimensionGeometrySnapshot(TSD.DrawingHandler drawingHandler) {
+            LogDebug("=== BuildDimensionGeometrySnapshot ===");
+
+            var selectedParts = GetSelectedDrawingParts(drawingHandler);
+            LogDebug("Liczba zaznaczonych partów: " + selectedParts.Count);
+
+            if (selectedParts.Count == 0) {
+                var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
+                if (selectedView == null) {
+                    LogDebug("selectedView == null");
+                    return null;
+                }
+
+                var allViewBounds = GetPartBoundsFromView(selectedView);
+                var allPartsBounds = GetAssemblyBounds(allViewBounds);
+
+                if (allPartsBounds == null) {
+                    LogDebug("allPartsBounds == null dla widoku");
+                    return null;
+                }
+
+                var endpoints = GetLineAndPolylineEndpoints(selectedView);
+
+                return new DimensionGeometrySnapshot {
+                    View = selectedView,
+                    AllPartsBounds = allPartsBounds,
+                    SelectedBounds = allPartsBounds,
+                    Endpoints = endpoints,
+                    ElementEndpoints = new List<ElementEndpointsSnapshot>()
+                };
+            }
+
+            var selectedViewFromParts = GetCommonViewFromSelectedParts(selectedParts);
+            if (selectedViewFromParts == null) {
+                MessageBox.Show("Zaznaczone elementy muszą należeć do jednego widoku.");
+                LogDebug("selectedViewFromParts == null");
+                return null;
+            }
+
+            var elementEndpoints = DrawPartEdgeOutlines(selectedViewFromParts, selectedParts);
+
+            var allViewBoundsFromParts = GetPartBoundsFromView(selectedViewFromParts);
+            var allPartsBoundsFromParts = GetAssemblyBounds(allViewBoundsFromParts);
+
+            if (allPartsBoundsFromParts == null) {
+                LogDebug("allPartsBoundsFromParts == null");
+                return null;
+            }
+
+            var selectedBoundsList = GetPartBoundsFromDrawingParts(selectedViewFromParts, selectedParts);
+            var selectedBounds = GetAssemblyBounds(selectedBoundsList);
+
+            if (selectedBounds == null) {
+                LogDebug("selectedBounds == null");
+                return null;
+            }
+
+            var mergedEndpoints = elementEndpoints
+                .Where(x => x?.Endpoints != null)
+                .SelectMany(x => x.Endpoints)
+                .ToList();
+
+            return new DimensionGeometrySnapshot {
+                View = selectedViewFromParts,
+                AllPartsBounds = allPartsBoundsFromParts,
+                SelectedBounds = selectedBounds,
+                Endpoints = mergedEndpoints,
+                ElementEndpoints = elementEndpoints
+            };
+        }
+
+        #endregion
+
         #region Bounds Calculation
 
         private static PartBounds GetAssemblyBounds(List<PartBounds> parts) {
-            if (parts == null || parts.Count == 0) return null;
+            var valid = parts?.Where(p => p != null).ToList();
+            if (valid == null || valid.Count == 0) return null;
 
-            var minX = double.MaxValue;
-            var minY = double.MaxValue;
-            var maxX = double.MinValue;
-            var maxY = double.MinValue;
-            var found = false;
+            return new PartBounds {
+                MinX = valid.Min(p => p.MinX),
+                MaxX = valid.Max(p => p.MaxX),
+                MinY = valid.Min(p => p.MinY),
+                MaxY = valid.Max(p => p.MaxY)
+            };
+        }
 
-            foreach (var p in parts.Where(p => p != null)) {
-                if (p.MinX < minX) minX = p.MinX;
-                if (p.MinY < minY) minY = p.MinY;
-                if (p.MaxX > maxX) maxX = p.MaxX;
-                if (p.MaxY > maxY) maxY = p.MaxY;
-                found = true;
-            }
+        private static PartBounds GetBoundsFromPoints(List<TSG.Point> points) {
+            var valid = points?.Where(point => point != null).ToList();
+            if (valid == null || valid.Count == 0) return null;
 
-            var result = !found ? null : new PartBounds { MinX = minX, MaxX = maxX, MinY = minY, MaxY = maxY };
-            return result;
+            return new PartBounds {
+                MinX = valid.Min(point => point.X),
+                MaxX = valid.Max(point => point.X),
+                MinY = valid.Min(point => point.Y),
+                MaxY = valid.Max(point => point.Y)
+            };
         }
 
         #endregion
@@ -172,6 +250,99 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
+        private static List<TSG.Point> GetLineAndPolylineEndpoints(TSD.View view) {
+            var result = new List<TSG.Point>();
+            if (view == null) return result;
+
+            var it = view.GetAllObjects(typeof(TSD.Line));
+            while (it?.MoveNext() == true)
+                if (it.Current is TSD.Line line) {
+                    result.Add(new TSG.Point(line.StartPoint.X, line.StartPoint.Y, 0));
+                    result.Add(new TSG.Point(line.EndPoint.X, line.EndPoint.Y, 0));
+                }
+
+            it = view.GetAllObjects(typeof(TSD.Polyline));
+            while (it?.MoveNext() == true) {
+                if (!(it.Current is TSD.Polyline poly)) continue;
+                var pts = new List<TSG.Point>();
+                foreach (var item in poly.Points)
+                    if (item is TSG.Point p)
+                        pts.Add(p);
+                if (pts.Count == 0) continue;
+                result.Add(new TSG.Point(pts[0].X, pts[0].Y, 0));
+                if (pts.Count > 1)
+                    result.Add(new TSG.Point(pts[pts.Count - 1].X, pts[pts.Count - 1].Y, 0));
+            }
+
+            return result;
+        }
+
+        private static void AddEndpointPair(List<TSG.Point> collector, TSG.Point startPoint, TSG.Point endPoint) {
+            if (collector == null || startPoint == null || endPoint == null) return;
+
+            collector.Add(new TSG.Point(startPoint.X, startPoint.Y, 0));
+            collector.Add(new TSG.Point(endPoint.X, endPoint.Y, 0));
+        }
+
+        private static List<double> GetPerElementHorizontalCoordinates(
+            ElementEndpointsSnapshot element,
+            DimensionGeometrySnapshot snapshot,
+            HorizontalDimensionPlacement placement
+        ) {
+            if (element?.Endpoints == null || element.Endpoints.Count == 0) return new List<double>();
+
+            var localBounds = GetBoundsFromPoints(element.Endpoints);
+            if (localBounds == null) return new List<double>();
+
+            var isAbove = placement == HorizontalDimensionPlacement.Above;
+            var midY = (localBounds.MinY + localBounds.MaxY) / 2.0;
+
+            return MergeAndSort(
+                element.Endpoints
+                    .Where(p => isAbove ? p.Y >= midY : p.Y <= midY)
+                    .Select(p => p.X)
+                    .Concat(new[] { snapshot.AllPartsBounds.MinX, snapshot.AllPartsBounds.MaxX }),
+                DimensionMergeToleranceMillimeters
+            );
+        }
+
+        private static List<double> GetPerElementVerticalCoordinates(
+            ElementEndpointsSnapshot element,
+            DimensionGeometrySnapshot snapshot,
+            VerticalDimensionPlacement placement
+        ) {
+            if (element?.Endpoints == null || element.Endpoints.Count == 0) return new List<double>();
+
+            var localBounds = GetBoundsFromPoints(element.Endpoints);
+            if (localBounds == null) return new List<double>();
+
+            var isRight = placement == VerticalDimensionPlacement.Right;
+            var midX = (localBounds.MinX + localBounds.MaxX) / 2.0;
+
+            return MergeAndSort(
+                element.Endpoints
+                    .Where(p => isRight ? p.X >= midX : p.X <= midX)
+                    .Select(p => p.Y)
+                    .Concat(new[] { snapshot.AllPartsBounds.MinY, snapshot.AllPartsBounds.MaxY }),
+                DimensionMergeToleranceMillimeters
+            );
+        }
+
+        private static PartBounds GetElementLocalBounds(ElementEndpointsSnapshot element) {
+            return GetBoundsFromPoints(element?.Endpoints);
+        }
+
+        private static void AddHorizontalPoints(TSD.PointList points, IEnumerable<double> xCoordinates,
+            double anchorY) {
+            foreach (var x in xCoordinates)
+                points.Add(new TSG.Point(x, anchorY, 0));
+        }
+
+        private static void AddVerticalPoints(TSD.PointList points, IEnumerable<double> yCoordinates, double anchorX) {
+            foreach (var y in yCoordinates)
+                points.Add(new TSG.Point(anchorX, y, 0));
+        }
+
         #endregion
 
         #region Entry Point
@@ -179,11 +350,27 @@ namespace HFT_DrawingHelper {
         private static readonly StringBuilder DebugBuilder = new StringBuilder();
         private static string _debugFilePath;
 
-        private static void AddDimensions(DimensionOptions options) {
+        private static void AddDimensions(List<DimensionOptions> optionsList) {
             StartDebugSession();
 
             try {
                 LogDebug("=== START AddDimensions ===");
+
+                var validOptions = optionsList?.Where(option =>
+                        option != null &&
+                        ((option.CreateHorizontal &&
+                          (option.HorizontalPlacement == HorizontalDimensionPlacement.Above ||
+                           option.HorizontalPlacement == HorizontalDimensionPlacement.Below)) ||
+                         (option.CreateVertical &&
+                          (option.VerticalPlacement == VerticalDimensionPlacement.Left ||
+                           option.VerticalPlacement == VerticalDimensionPlacement.Right))))
+                    .ToList();
+
+                if (validOptions == null || validOptions.Count == 0) {
+                    LogDebug("Brak poprawnych opcji wymiarowania.");
+                    FlushDebugSession();
+                    return;
+                }
 
                 var drawingHandler = new TSD.DrawingHandler();
                 if (!drawingHandler.GetConnectionStatus()) {
@@ -199,20 +386,32 @@ namespace HFT_DrawingHelper {
                     return;
                 }
 
-                LogDebug("Aktywny rysunek pobrany poprawnie.");
-
-                var selectedParts = GetSelectedDrawingParts(drawingHandler);
-                LogDebug("Liczba zaznaczonych partów: " + selectedParts.Count);
-
-                if (selectedParts.Count == 0) {
-                    LogDebug("Brak zaznaczonych partów -> AddDimensionsFromSelectedView");
-                    AddDimensionsFromSelectedView(drawingHandler, activeDrawing, options);
+                var snapshot = BuildDimensionGeometrySnapshot(drawingHandler);
+                if (snapshot?.View == null || snapshot.AllPartsBounds == null ||
+                    snapshot.SelectedBounds == null) {
+                    LogDebug("Nie udało się zbudować snapshotu geometrii.");
                     FlushDebugSession();
                     return;
                 }
 
-                LogDebug("Są zaznaczone party -> AddDimensionsFromSelectedParts");
-                AddDimensionsFromSelectedParts(activeDrawing, selectedParts, options);
+                foreach (var option in validOptions) {
+                    if (option.CreateHorizontal) {
+                        if (option.HorizontalFarPlacement)
+                            CreateOverallHorizontalDimensions(snapshot, option);
+                        else
+                            CreatePerElementHorizontalDimensions(snapshot, option);
+                    }
+
+                    if (option.CreateVertical) {
+                        if (option.VerticalFarPlacement)
+                            CreateOverallVerticalDimensions(snapshot, option);
+                        else
+                            CreatePerElementVerticalDimensions(snapshot, option);
+                    }
+                }
+
+                activeDrawing.CommitChanges();
+                LogDebug("CommitChanges wykonany raz na końcu.");
                 FlushDebugSession();
             }
             catch (Exception exception) {
@@ -257,31 +456,7 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
-            LogDebug(string.Format(
-                "{0}: X={1:0.###}, Y={2:0.###}, Z={3:0.###}",
-                label,
-                point.X,
-                point.Y,
-                point.Z
-            ));
-        }
-
-        private static void LogBounds(string label, PartBounds bounds) {
-            if (bounds == null) {
-                LogDebug(label + ": null");
-                return;
-            }
-
-            LogDebug(string.Format(
-                "{0}: MinX={1:0.###}, MaxX={2:0.###}, MinY={3:0.###}, MaxY={4:0.###}, Width={5:0.###}, Height={6:0.###}",
-                label,
-                bounds.MinX,
-                bounds.MaxX,
-                bounds.MinY,
-                bounds.MaxY,
-                bounds.MaxX - bounds.MinX,
-                bounds.MaxY - bounds.MinY
-            ));
+            LogDebug($"{label}: X={point.X:0.###}, Y={point.Y:0.###}, Z={point.Z:0.###}");
         }
 
         private static void LogPointsSummary(string label, List<TSG.Point> points, int previewCount = 10) {
@@ -294,14 +469,7 @@ namespace HFT_DrawingHelper {
 
             for (var i = 0; i < points.Count && i < previewCount; i++) {
                 var point = points[i];
-                LogDebug(string.Format(
-                    "{0}[{1}] = X={2:0.###}, Y={3:0.###}, Z={4:0.###}",
-                    label,
-                    i,
-                    point.X,
-                    point.Y,
-                    point.Z
-                ));
+                LogDebug($"{label}[{i}] = X={point.X:0.###}, Y={point.Y:0.###}, Z={point.Z:0.###}");
             }
 
             if (points.Count > previewCount)
@@ -322,7 +490,8 @@ namespace HFT_DrawingHelper {
 
         #region Constants
 
-        private const double OverallDimensionOffsetMillimeters = 20.0;
+        private const double FarDimensionOffsetMillimeters = 20.0;
+        private const double PerElementDimensionOffsetMillimeters = 100.0;
         private const double MinimumDimensionSpanMillimeters = 1.0;
         private const double CurvedDimensionArcDepthRatio = 0.15;
         private const double DimensionMergeToleranceMillimeters = 1.0;
@@ -355,6 +524,8 @@ namespace HFT_DrawingHelper {
             public VerticalDimensionPlacement VerticalPlacement { get; set; }
             public bool CreateHorizontal { get; set; }
             public bool CreateVertical { get; set; }
+            public bool HorizontalFarPlacement { get; set; }
+            public bool VerticalFarPlacement { get; set; }
         }
 
         private sealed class DrawingPartWithBounds {
@@ -368,160 +539,158 @@ namespace HFT_DrawingHelper {
             public double MaxY { get; set; }
         }
 
-        #endregion
-
-        #region Main Dimension Flow
-
-        private static void AddDimensionsFromSelectedView(
-            TSD.DrawingHandler drawingHandler,
-            TSD.Drawing activeDrawing,
-            DimensionOptions options
-        ) {
-            LogDebug("=== AddDimensionsFromSelectedView ===");
-
-            var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
-            if (selectedView == null) {
-                LogDebug("selectedView == null");
-                return;
-            }
-
-            LogDebug("Wybrany widok poprawny.");
-
-            var allViewBounds = GetPartBoundsFromView(selectedView);
-            LogDebug("Bounds z widoku: " + allViewBounds.Count);
-
-            var allPartsBounds = GetAssemblyBounds(allViewBounds);
-            LogBounds("allPartsBounds(view)", allPartsBounds);
-
-            if (allPartsBounds == null) {
-                MessageBox.Show("Nie udało się wyznaczyć obwiedni elementów w widoku.");
-                return;
-            }
-
-            CreateOverallAssemblyDimensions(selectedView, allPartsBounds, allViewBounds, options);
-            activeDrawing.CommitChanges();
-            LogDebug("CommitChanges wykonany dla AddDimensionsFromSelectedView.");
+        private sealed class ElementEndpointsSnapshot {
+            public PartBounds Bounds { get; set; }
+            public List<TSG.Point> Endpoints { get; set; }
         }
 
-        private static void AddDimensionsFromSelectedParts(
-            TSD.Drawing activeDrawing,
-            List<DrawingPartWithBounds> selectedParts,
-            DimensionOptions options
-        ) {
-            LogDebug("=== AddDimensionsFromSelectedParts ===");
-            LogDebug("selectedParts.Count = " + selectedParts.Count);
-
-            var selectedView = GetCommonViewFromSelectedParts(selectedParts);
-            if (selectedView == null) {
-                MessageBox.Show("Zaznaczone elementy muszą należeć do jednego widoku.");
-                LogDebug("selectedView == null lub party z różnych widoków.");
-                return;
-            }
-
-            DrawPartEdgeOutlines(selectedView, selectedParts);
-
-            var allViewBounds = GetPartBoundsFromView(selectedView);
-            LogDebug("allViewBounds.Count = " + allViewBounds.Count);
-
-            var allPartsBounds = GetAssemblyBounds(allViewBounds);
-            LogBounds("allPartsBounds(selectedView)", allPartsBounds);
-
-            if (allPartsBounds == null) {
-                MessageBox.Show("Nie udało się wyznaczyć obwiedni wszystkich elementów w widoku.");
-                return;
-            }
-
-            var selectedBounds = GetPartBoundsFromDrawingParts(selectedView, selectedParts);
-            LogDebug("selectedBounds.Count = " + selectedBounds.Count);
-
-            CreateOverallAssemblyDimensions(selectedView, allPartsBounds, selectedBounds, options);
-            activeDrawing.CommitChanges();
-            LogDebug("CommitChanges wykonany dla AddDimensionsFromSelectedParts.");
+        private sealed class DimensionGeometrySnapshot {
+            public TSD.View View { get; set; }
+            public PartBounds AllPartsBounds { get; set; }
+            public PartBounds SelectedBounds { get; set; }
+            public List<TSG.Point> Endpoints { get; set; }
+            public List<ElementEndpointsSnapshot> ElementEndpoints { get; set; }
         }
 
         #endregion
 
         #region Dimension Creation
 
-        private static void CreateOverallAssemblyDimensions(
-            TSD.View selectedView,
-            PartBounds allPartsBounds,
-            List<PartBounds> parts,
+        private static void CreateOverallHorizontalDimensions(
+            DimensionGeometrySnapshot snapshot,
             DimensionOptions options
         ) {
-            if (selectedView == null || allPartsBounds == null) return;
+            if (snapshot?.View == null || snapshot.AllPartsBounds == null || snapshot.ElementEndpoints == null) return;
 
-            LogDebug("=== CreateOverallAssemblyDimensions ===");
-            LogBounds("allPartsBounds", allPartsBounds);
+            var allPartsBounds = snapshot.AllPartsBounds;
+            if (allPartsBounds.MaxX - allPartsBounds.MinX < MinimumDimensionSpanMillimeters) return;
 
-            var selectedBounds = GetAssemblyBounds(parts);
-            LogBounds("selectedBounds", selectedBounds);
+            var isAbove = options.HorizontalPlacement == HorizontalDimensionPlacement.Above;
+            var anchorY = isAbove ? allPartsBounds.MaxY : allPartsBounds.MinY;
 
-            if (selectedBounds == null) return;
+            var mergedX = new List<double>();
 
-            var xCoordinates = MergeAndSort(
-                parts
-                    .Where(p => p != null)
-                    .SelectMany(p => new[] { p.MinX, p.MaxX })
-                    .Concat(new[] { allPartsBounds.MinX, allPartsBounds.MaxX }),
-                DimensionMergeToleranceMillimeters
+            foreach (var element in snapshot.ElementEndpoints) {
+                var localBounds = GetElementLocalBounds(element);
+                if (localBounds == null) continue;
+                if (localBounds.MaxX - localBounds.MinX < MinimumDimensionSpanMillimeters) continue;
+
+                mergedX.AddRange(GetPerElementHorizontalCoordinates(element, snapshot, options.HorizontalPlacement));
+            }
+
+            var xCoordinates = MergeAndSort(mergedX, DimensionMergeToleranceMillimeters);
+            if (xCoordinates.Count < 2) return;
+
+            var horizontalPoints = new TSD.PointList();
+            AddHorizontalPoints(horizontalPoints, xCoordinates, anchorY);
+
+            CreateDimensionSet(
+                snapshot.View,
+                horizontalPoints,
+                GetHorizontalDirectionVector(options.HorizontalPlacement),
+                FarDimensionOffsetMillimeters,
+                options.DimensionType
             );
+        }
 
-            var yCoordinates = MergeAndSort(
-                parts
-                    .Where(p => p != null)
-                    .SelectMany(p => new[] { p.MinY, p.MaxY })
-                    .Concat(new[] { allPartsBounds.MinY, allPartsBounds.MaxY }),
-                DimensionMergeToleranceMillimeters
+        private static void CreateOverallVerticalDimensions(
+            DimensionGeometrySnapshot snapshot,
+            DimensionOptions options
+        ) {
+            if (snapshot?.View == null || snapshot.AllPartsBounds == null || snapshot.ElementEndpoints == null) return;
+
+            var allPartsBounds = snapshot.AllPartsBounds;
+            if (allPartsBounds.MaxY - allPartsBounds.MinY < MinimumDimensionSpanMillimeters) return;
+
+            var isRight = options.VerticalPlacement == VerticalDimensionPlacement.Right;
+            var anchorX = isRight ? allPartsBounds.MaxX : allPartsBounds.MinX;
+
+            var mergedY = new List<double>();
+
+            foreach (var element in snapshot.ElementEndpoints) {
+                var localBounds = GetElementLocalBounds(element);
+                if (localBounds == null) continue;
+                if (localBounds.MaxY - localBounds.MinY < MinimumDimensionSpanMillimeters) continue;
+
+                mergedY.AddRange(GetPerElementVerticalCoordinates(element, snapshot, options.VerticalPlacement));
+            }
+
+            var yCoordinates = MergeAndSort(mergedY, DimensionMergeToleranceMillimeters);
+            if (yCoordinates.Count < 2) return;
+
+            var verticalPoints = new TSD.PointList();
+            AddVerticalPoints(verticalPoints, yCoordinates, anchorX);
+
+            CreateDimensionSet(
+                snapshot.View,
+                verticalPoints,
+                GetVerticalDirectionVector(options.VerticalPlacement),
+                FarDimensionOffsetMillimeters,
+                options.DimensionType
             );
+        }
 
-            LogValuesSummary("xCoordinates", xCoordinates);
-            LogValuesSummary("yCoordinates", yCoordinates);
+        private static void CreatePerElementHorizontalDimensions(
+            DimensionGeometrySnapshot snapshot,
+            DimensionOptions options
+        ) {
+            if (snapshot?.View == null || snapshot.ElementEndpoints == null) return;
 
-            var totalWidth = allPartsBounds.MaxX - allPartsBounds.MinX;
-            var totalHeight = allPartsBounds.MaxY - allPartsBounds.MinY;
+            foreach (var element in snapshot.ElementEndpoints) {
+                if (element?.Endpoints == null || element.Endpoints.Count == 0) continue;
 
-            LogDebug("totalWidth = " + totalWidth.ToString("0.###"));
-            LogDebug("totalHeight = " + totalHeight.ToString("0.###"));
+                var localBounds = GetElementLocalBounds(element);
+                if (localBounds == null) continue;
 
-            if (options.CreateHorizontal && totalWidth >= MinimumDimensionSpanMillimeters &&
-                xCoordinates.Count >= 2) {
-                var anchorY = options.HorizontalPlacement == HorizontalDimensionPlacement.Above
-                    ? selectedBounds.MaxY
-                    : selectedBounds.MinY;
+                if (localBounds.MaxX - localBounds.MinX < MinimumDimensionSpanMillimeters) continue;
 
-                LogDebug("Tworzenie wymiaru poziomego, anchorY = " + anchorY.ToString("0.###"));
+                var isAbove = options.HorizontalPlacement == HorizontalDimensionPlacement.Above;
+                var anchorY = isAbove ? localBounds.MaxY : localBounds.MinY;
+
+                var xCoordinates = GetPerElementHorizontalCoordinates(element, snapshot, options.HorizontalPlacement);
+                if (xCoordinates.Count < 2) continue;
 
                 var horizontalPoints = new TSD.PointList();
-                foreach (var x in xCoordinates)
-                    horizontalPoints.Add(new TSG.Point(x, anchorY, 0));
+                AddHorizontalPoints(horizontalPoints, xCoordinates, anchorY);
 
                 CreateDimensionSet(
-                    selectedView,
+                    snapshot.View,
                     horizontalPoints,
                     GetHorizontalDirectionVector(options.HorizontalPlacement),
-                    OverallDimensionOffsetMillimeters,
+                    PerElementDimensionOffsetMillimeters,
                     options.DimensionType
                 );
             }
+        }
 
-            if (options.CreateVertical && totalHeight >= MinimumDimensionSpanMillimeters &&
-                yCoordinates.Count >= 2) {
-                var anchorX = options.VerticalPlacement == VerticalDimensionPlacement.Right
-                    ? selectedBounds.MaxX
-                    : selectedBounds.MinX;
+        private static void CreatePerElementVerticalDimensions(
+            DimensionGeometrySnapshot snapshot,
+            DimensionOptions options
+        ) {
+            if (snapshot?.View == null || snapshot.ElementEndpoints == null) return;
 
-                LogDebug("Tworzenie wymiaru pionowego, anchorX = " + anchorX.ToString("0.###"));
+            foreach (var element in snapshot.ElementEndpoints) {
+                if (element?.Endpoints == null || element.Endpoints.Count == 0) continue;
+
+                var localBounds = GetElementLocalBounds(element);
+                if (localBounds == null) continue;
+
+                if (localBounds.MaxY - localBounds.MinY < MinimumDimensionSpanMillimeters) continue;
+
+                var isRight = options.VerticalPlacement == VerticalDimensionPlacement.Right;
+                var anchorX = isRight ? localBounds.MaxX : localBounds.MinX;
+
+                var yCoordinates = GetPerElementVerticalCoordinates(element, snapshot, options.VerticalPlacement);
+                if (yCoordinates.Count < 2) continue;
 
                 var verticalPoints = new TSD.PointList();
-                foreach (var y in yCoordinates)
-                    verticalPoints.Add(new TSG.Point(anchorX, y, 0));
+                AddVerticalPoints(verticalPoints, yCoordinates, anchorX);
 
                 CreateDimensionSet(
-                    selectedView,
+                    snapshot.View,
                     verticalPoints,
                     GetVerticalDirectionVector(options.VerticalPlacement),
-                    OverallDimensionOffsetMillimeters,
+                    PerElementDimensionOffsetMillimeters,
                     options.DimensionType
                 );
             }
@@ -549,12 +718,8 @@ namespace HFT_DrawingHelper {
             LogDebug("=== CreateDimensionSet ===");
             LogDebug("dimensionType = " + dimensionType);
             LogDebug("dimensionPoints.Count = " + dimensionPoints.Count);
-            LogDebug(string.Format(
-                "directionVector = ({0:0.###}, {1:0.###}, {2:0.###})",
-                directionVector.X,
-                directionVector.Y,
-                directionVector.Z
-            ));
+            LogDebug(
+                $"directionVector = ({directionVector.X:0.###}, {directionVector.Y:0.###}, {directionVector.Z:0.###})");
             LogDebug("offsetMillimeters = " + offsetMillimeters.ToString("0.###"));
 
             if (dimensionType == DimensionType.Straight) {
@@ -752,15 +917,9 @@ namespace HFT_DrawingHelper {
                     new TSG.Point(xValue, 0, 1)
                 );
 
-                var localCount = 0;
-
-                while (enumerator.MoveNext()) {
-                    if (!(enumerator.Current is TSG.Point p)) continue;
-                    points.Add(new TSG.Point(xValue, p.Y, 0));
-                    localCount++;
-                }
-
-                LogDebug("x = " + xValue.ToString("0.###") + " -> intersections = " + localCount);
+                while (enumerator.MoveNext())
+                    if (enumerator.Current is TSG.Point p)
+                        points.Add(new TSG.Point(xValue, p.Y, 0));
             }
 
             points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
@@ -792,17 +951,13 @@ namespace HFT_DrawingHelper {
 
                         var distance = GetDistanceToSegment(middle, first, last);
 
+                        if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], first))
+                            next.Add(first);
                         if (distance <= toleranceMillimeters) {
-                            if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], first))
-                                next.Add(first);
-
                             next.Add(last);
                             changed = true;
                         }
                         else {
-                            if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], first))
-                                next.Add(first);
-
                             next.Add(middle);
                             next.Add(last);
                         }
@@ -890,8 +1045,10 @@ namespace HFT_DrawingHelper {
 
         #region Part Edge Outline Drawing
 
-        private static void DrawPartEdgeOutlines(TSD.View view, List<DrawingPartWithBounds> drawingParts) {
-            if (view == null || drawingParts == null) return;
+        private static List<ElementEndpointsSnapshot> DrawPartEdgeOutlines(TSD.View view,
+            List<DrawingPartWithBounds> drawingParts) {
+            var result = new List<ElementEndpointsSnapshot>();
+            if (view == null || drawingParts == null) return result;
 
             var workPlaneHandler = MyModel.GetWorkPlaneHandler();
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
@@ -909,41 +1066,25 @@ namespace HFT_DrawingHelper {
                     var solid = modelPart.GetSolid();
                     if (solid == null) continue;
 
-                    LogDebug(new string('-', 80));
-                    LogDebug("Part: " + modelPart.Name + " | Type: " + modelPart.GetType().FullName);
-                    LogPoint("solid.MinimumPoint", solid.MinimumPoint);
-                    LogPoint("solid.MaximumPoint", solid.MaximumPoint);
+                    var bounds = GetPartAabbInViewSpace(view, modelPart);
+                    if (bounds == null) continue;
 
+                    var collectedEndpoints = new List<TSG.Point>();
                     List<TSG.Point> outline;
 
                     if (ShouldUseSweepOutline(modelPart)) {
-                        LogDebug("Tryb: sweepowany plate");
-
                         var points = GetSweptPlateOutlinePoints(solid);
-                        if (points.Count < 2) {
-                            LogDebug("Za mało punktów sweep.");
-                            continue;
-                        }
+                        if (points.Count < 2) continue;
 
                         outline = BuildUpperLowerChainOutline(points);
-                        if (outline == null || outline.Count < 3) {
-                            LogDebug("Outline sweep == null lub < 3");
-                            continue;
-                        }
+                        if (outline == null || outline.Count < 3) continue;
 
                         outline = PrepareSegmentPath(outline);
                         outline = EnsureClosedOutline(outline);
 
-                        if (outline == null || outline.Count < 4) {
-                            LogDebug("Outline sweep po domknięciu == null lub < 4");
-                            continue;
-                        }
-
-                        LogPointsSummary("Sweep final outline", outline);
+                        if (outline == null || outline.Count < 4) continue;
                     }
                     else {
-                        LogDebug("Tryb: zwykły Part - tylko zielony przekrój");
-
                         var backZ = solid.MinimumPoint.Z;
                         const double inward = 1.0;
 
@@ -952,74 +1093,59 @@ namespace HFT_DrawingHelper {
                         else
                             backZ = (solid.MinimumPoint.Z + solid.MaximumPoint.Z) * 0.5;
 
-                        LogDebug("backZ = " + backZ.ToString("0.###"));
-
                         var backPoints = GetIntersectionPointsAtLocalZ(solid, backZ);
-                        LogPointsSummary("backPoints", backPoints);
-
-                        if (backPoints == null || backPoints.Count < 3) {
-                            LogDebug("Za mało punktów backPoints.");
-                            continue;
-                        }
+                        if (backPoints == null || backPoints.Count < 3) continue;
 
                         backPoints = RemoveNearDuplicates(backPoints, DuplicateToleranceMillimeters);
                         outline = BuildConvexHull2D(backPoints);
 
-                        if (outline == null || outline.Count < 3) {
-                            LogDebug("Hull backPoints == null lub < 3");
-                            continue;
-                        }
+                        if (outline == null || outline.Count < 3) continue;
 
                         outline = PrepareSegmentPath(outline);
                         outline = EnsureClosedOutline(outline);
 
-                        if (outline == null || outline.Count < 4) {
-                            LogDebug("Outline back po domknięciu == null lub < 4");
-                            continue;
-                        }
-
-                        LogPointsSummary("Back final outline", outline);
+                        if (outline == null || outline.Count < 4) continue;
                     }
 
-                    DrawOutlineByAngleType(view, outline);
+                    DrawOutlineByAngleType(view, outline, collectedEndpoints);
+
+                    result.Add(new ElementEndpointsSnapshot {
+                        Bounds = bounds,
+                        Endpoints = collectedEndpoints
+                    });
                 }
             }
             finally {
                 workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
             }
+
+            return result;
         }
 
-        private static void DrawOutlineByAngleType(TSD.View view, List<TSG.Point> outline) {
-            if (view == null || outline == null || outline.Count < 2) {
-                LogDebug("DrawOutlineByAngleType: outline == null lub < 2");
-                return;
-            }
+        private static void DrawOutlineByAngleType(
+            TSD.View view,
+            List<TSG.Point> outline,
+            List<TSG.Point> endpointCollector
+        ) {
+            if (view == null || outline == null || outline.Count < 2) return;
 
             var vertices = GetOpenOutlineVertices(outline);
-            if (vertices == null || vertices.Count < 2) {
-                LogDebug("DrawOutlineByAngleType: vertices == null lub < 2");
-                return;
-            }
-
-            LogPointsSummary("Open outline vertices", vertices);
+            if (vertices == null || vertices.Count < 2) return;
 
             if (vertices.Count == 2) {
-                LogDebug("DrawOutlineByAngleType: outline ma tylko 2 punkty -> rysuję linię.");
                 DrawStraightSegmentPrimitive(view, vertices[0], vertices[1], TSD.DrawingColors.Green);
+                AddEndpointPair(endpointCollector, vertices[0], vertices[1]);
                 return;
             }
 
             var significantCornerIndices = GetSignificantCornerIndices(vertices);
-            LogDebug("Significant corners = " + significantCornerIndices.Count);
 
-            if (significantCornerIndices.Count == 0) {
-                DrawPolylinePrimitive(view, vertices, TSD.DrawingColors.Green);
-                return;
-            }
-
-            if (significantCornerIndices.Count == 1) {
-                DrawPolylinePrimitive(view, vertices, TSD.DrawingColors.Green);
-                return;
+            switch (significantCornerIndices.Count) {
+                case 0:
+                case 1:
+                    DrawPolylinePrimitive(view, vertices, TSD.DrawingColors.Green);
+                    AddEndpointPair(endpointCollector, vertices.First(), vertices.Last());
+                    return;
             }
 
             for (var i = 0; i < significantCornerIndices.Count; i++) {
@@ -1031,12 +1157,14 @@ namespace HFT_DrawingHelper {
 
                 if (path == null || path.Count < 2) continue;
 
-                LogPointsSummary("Path " + i, path);
-
-                if (path.Count == 2)
+                if (path.Count == 2) {
                     DrawStraightSegmentPrimitive(view, path[0], path[1], TSD.DrawingColors.Red);
-                else
+                    AddEndpointPair(endpointCollector, path[0], path[1]);
+                }
+                else {
                     DrawPolylinePrimitive(view, path, TSD.DrawingColors.Green);
+                    AddEndpointPair(endpointCollector, path.First(), path.Last());
+                }
             }
         }
 
@@ -1053,18 +1181,12 @@ namespace HFT_DrawingHelper {
                 (startPoint.Y - endPoint.Y) * (startPoint.Y - endPoint.Y)
             );
 
-            if (distance <= DuplicateToleranceMillimeters) {
-                LogDebug("DrawStraightSegmentPrimitive: odcinek za krótki.");
-                return;
-            }
+            if (distance <= DuplicateToleranceMillimeters) return;
 
             var points = new TSD.PointList {
                 new TSG.Point(startPoint.X, startPoint.Y, 0),
                 new TSG.Point(endPoint.X, endPoint.Y, 0)
             };
-
-            LogPoint("Red start", startPoint);
-            LogPoint("Red end", endPoint);
 
             var polyline = new TSD.Polyline(view, points);
             polyline.Attributes.Line.Color = color;
@@ -1076,50 +1198,40 @@ namespace HFT_DrawingHelper {
             List<TSG.Point> points,
             TSD.DrawingColors color
         ) {
-            if (view == null || points == null || points.Count < 2) {
-                LogDebug("DrawPolylinePrimitive: points == null lub < 2");
-                return;
-            }
+            if (view == null || points == null || points.Count < 2) return;
 
             var cleanedPoints = RemoveNearDuplicates(
                 new List<TSG.Point>(points),
                 DuplicateToleranceMillimeters
             );
 
-            if (cleanedPoints == null || cleanedPoints.Count < 2) {
-                LogDebug("DrawPolylinePrimitive: cleanedPoints == null lub < 2");
-                return;
-            }
+            if (cleanedPoints == null || cleanedPoints.Count < 2) return;
 
-            if (cleanedPoints.Count == 2) {
-                LogDebug("DrawPolylinePrimitive: wykryto 2 punkty -> rysuję zwykłą linię.");
-                DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
-                return;
-            }
-
-            if (cleanedPoints.Count == 3) {
-                var first = cleanedPoints[0];
-                var last = cleanedPoints[cleanedPoints.Count - 1];
-
-                var distance = Math.Sqrt(
-                    (first.X - last.X) * (first.X - last.X) +
-                    (first.Y - last.Y) * (first.Y - last.Y)
-                );
-
-                if (distance <= DuplicateToleranceMillimeters) {
-                    LogDebug("DrawPolylinePrimitive: po domknięciu są tylko 2 unikalne punkty -> rysuję zwykłą linię.");
+            switch (cleanedPoints.Count) {
+                case 2:
                     DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
                     return;
+                case 3: {
+                    var first = cleanedPoints[0];
+                    var last = cleanedPoints[cleanedPoints.Count - 1];
+
+                    var distance = Math.Sqrt(
+                        (first.X - last.X) * (first.X - last.X) +
+                        (first.Y - last.Y) * (first.Y - last.Y)
+                    );
+
+                    if (distance <= DuplicateToleranceMillimeters) {
+                        DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
+                        return;
+                    }
+
+                    break;
                 }
             }
 
             var polylinePoints = new TSD.PointList();
             foreach (var point in cleanedPoints)
                 polylinePoints.Add(new TSG.Point(point.X, point.Y, 0));
-
-            LogPoint("Polyline start", cleanedPoints.First());
-            LogPoint("Polyline end", cleanedPoints.Last());
-            LogDebug("Rysuję polyline, points = " + cleanedPoints.Count + ", color = " + color);
 
             var polyline = new TSD.Polyline(view, polylinePoints);
             polyline.Attributes.Line.Color = color;
@@ -1152,9 +1264,6 @@ namespace HFT_DrawingHelper {
                 var bounds = GetPartAabbInViewSpace(view, modelPart);
                 if (bounds == null) continue;
 
-                LogDebug("GetPartBoundsFromView -> " + modelPart.Name + " ID=" + id);
-                LogBounds("view part bounds", bounds);
-
                 result.Add(bounds);
             }
 
@@ -1175,9 +1284,6 @@ namespace HFT_DrawingHelper {
 
                 var bounds = GetPartAabbInViewSpace(view, modelPart);
                 if (bounds == null) continue;
-
-                LogDebug("GetPartBoundsFromDrawingParts -> " + modelPart.Name + " ID=" + modelPart.Identifier.ID);
-                LogBounds("selected part bounds", bounds);
 
                 result.Add(bounds);
             }

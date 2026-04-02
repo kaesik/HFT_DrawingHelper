@@ -33,28 +33,66 @@ namespace HFT_DrawingHelper {
                 ? DimensionType.Curved
                 : DimensionType.Straight;
 
-            var horizontalPlacement = DimensionAboveRadioButton.IsChecked == true
-                ? HorizontalDimensionPlacement.Above
-                : HorizontalDimensionPlacement.Below;
+            var createAbove = DimensionAboveCheckBox.IsChecked == true;
+            var createBelow = DimensionBelowCheckBox.IsChecked == true;
+            var createRight = DimensionRightCheckBox.IsChecked == true;
+            var createLeft = DimensionLeftCheckBox.IsChecked == true;
 
-            var verticalPlacement = DimensionRightRadioButton.IsChecked == true
-                ? VerticalDimensionPlacement.Right
-                : VerticalDimensionPlacement.Left;
+            var horizontalFar = HorizontalTotalDimensionCheckBox.IsChecked == true;
+            var verticalFar = VerticalTotalDimensionCheckBox.IsChecked == true;
 
-            var options = new DimensionOptions {
-                DimensionType = dimensionType,
-                HorizontalPlacement = horizontalPlacement,
-                VerticalPlacement = verticalPlacement,
-                CreateHorizontal = HorizontalDimensionCheckBox.IsChecked == true,
-                CreateVertical = VerticalDimensionCheckBox.IsChecked == true
-            };
+            var optionsList = new List<DimensionOptions>();
 
-            if (!options.CreateHorizontal && !options.CreateVertical) {
-                MessageBox.Show("Zaznacz co najmniej jeden wymiar do utworzenia.");
+            if (createAbove)
+                optionsList.Add(new DimensionOptions {
+                    DimensionType = dimensionType,
+                    HorizontalPlacement = HorizontalDimensionPlacement.Above,
+                    VerticalPlacement = VerticalDimensionPlacement.Right,
+                    CreateHorizontal = true,
+                    CreateVertical = false,
+                    HorizontalFarPlacement = horizontalFar,
+                    VerticalFarPlacement = verticalFar
+                });
+
+            if (createBelow)
+                optionsList.Add(new DimensionOptions {
+                    DimensionType = dimensionType,
+                    HorizontalPlacement = HorizontalDimensionPlacement.Below,
+                    VerticalPlacement = VerticalDimensionPlacement.Right,
+                    CreateHorizontal = true,
+                    CreateVertical = false,
+                    HorizontalFarPlacement = horizontalFar,
+                    VerticalFarPlacement = verticalFar
+                });
+
+            if (createRight)
+                optionsList.Add(new DimensionOptions {
+                    DimensionType = dimensionType,
+                    HorizontalPlacement = HorizontalDimensionPlacement.Above,
+                    VerticalPlacement = VerticalDimensionPlacement.Right,
+                    CreateHorizontal = false,
+                    CreateVertical = true,
+                    HorizontalFarPlacement = horizontalFar,
+                    VerticalFarPlacement = verticalFar
+                });
+
+            if (createLeft)
+                optionsList.Add(new DimensionOptions {
+                    DimensionType = dimensionType,
+                    HorizontalPlacement = HorizontalDimensionPlacement.Above,
+                    VerticalPlacement = VerticalDimensionPlacement.Left,
+                    CreateHorizontal = false,
+                    CreateVertical = true,
+                    HorizontalFarPlacement = horizontalFar,
+                    VerticalFarPlacement = verticalFar
+                });
+
+            if (optionsList.Count == 0) {
+                MessageBox.Show("Nie zaznaczono żadnego położenia wymiarów do utworzenia.");
                 return;
             }
 
-            AddDimensions(options);
+            AddDimensions(optionsList);
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {

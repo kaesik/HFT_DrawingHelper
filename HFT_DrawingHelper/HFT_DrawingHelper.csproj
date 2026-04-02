@@ -163,6 +163,9 @@
             <Generator>MSBuild:Compile</Generator>
             <SubType>Designer</SubType>
         </ApplicationDefinition>
+        <Compile Include="TeklaConnectionErrorWindow.xaml.cs">
+            <DependentUpon>TeklaConnectionErrorWindow.xaml</DependentUpon>
+        </Compile>
         <Compile Include="ThemeService.cs"/>
         <Page Include="MainWindow.xaml">
             <Generator>MSBuild:Compile</Generator>
@@ -179,6 +182,7 @@
             <DependentUpon>MainWindow.xaml</DependentUpon>
             <SubType>Code</SubType>
         </Compile>
+        <Page Include="TeklaConnectionErrorWindow.xaml"/>
         <Page Include="Themes\DarkTheme.xaml"/>
         <Page Include="Themes\LightTheme.xaml"/>
     </ItemGroup>
@@ -202,6 +206,7 @@
     </ItemGroup>
     <ItemGroup>
         <Resource Include="Assets\logo.png"/>
+        <Resource Include="Assets\no-connect.png"/>
         <Content Include="Resources\element_catalog_cross_section.bmp"/>
         <Content Include="Resources\element_catalog_cross_section_sketch.bmp"/>
         <Content Include="Resources\element_catalog_cross_section_user.bmp"/>

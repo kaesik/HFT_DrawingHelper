@@ -386,6 +386,12 @@ namespace HFT_DrawingHelper {
                     return;
                 }
 
+                foreach (var option in validOptions.Where(o => o.DimensionType == DimensionType.Curved))
+                    if (!PickCurvedArcPoints(drawingHandler, option)) {
+                        FlushDebugSession();
+                        return;
+                    }
+
                 var snapshot = BuildDimensionGeometrySnapshot(drawingHandler);
                 if (snapshot?.View == null || snapshot.AllPartsBounds == null ||
                     snapshot.SelectedBounds == null) {
@@ -526,6 +532,10 @@ namespace HFT_DrawingHelper {
             public bool CreateVertical { get; set; }
             public bool HorizontalFarPlacement { get; set; }
             public bool VerticalFarPlacement { get; set; }
+            public TSG.Point UserArcStart { get; set; }
+            public TSG.Point UserArcMid { get; set; }
+            public TSG.Point UserArcEnd { get; set; }
+            public bool HasUserArcPoints => UserArcStart != null && UserArcMid != null && UserArcEnd != null;
         }
 
         private sealed class DrawingPartWithBounds {
@@ -589,7 +599,7 @@ namespace HFT_DrawingHelper {
                 horizontalPoints,
                 GetHorizontalDirectionVector(options.HorizontalPlacement),
                 FarDimensionOffsetMillimeters,
-                options.DimensionType
+                options
             );
         }
 
@@ -626,7 +636,7 @@ namespace HFT_DrawingHelper {
                 verticalPoints,
                 GetVerticalDirectionVector(options.VerticalPlacement),
                 FarDimensionOffsetMillimeters,
-                options.DimensionType
+                options
             );
         }
 
@@ -658,7 +668,7 @@ namespace HFT_DrawingHelper {
                     horizontalPoints,
                     GetHorizontalDirectionVector(options.HorizontalPlacement),
                     PerElementDimensionOffsetMillimeters,
-                    options.DimensionType
+                    options
                 );
             }
         }
@@ -691,7 +701,7 @@ namespace HFT_DrawingHelper {
                     verticalPoints,
                     GetVerticalDirectionVector(options.VerticalPlacement),
                     PerElementDimensionOffsetMillimeters,
-                    options.DimensionType
+                    options
                 );
             }
         }
@@ -708,21 +718,43 @@ namespace HFT_DrawingHelper {
                 : new TSG.Vector(-1.0, 0.0, 0.0);
         }
 
+        private static bool PickCurvedArcPoints(TSD.DrawingHandler drawingHandler, DimensionOptions options) {
+            try {
+                var picker = drawingHandler.GetPicker();
+                var prompts = new TSD.StringList {
+                    "Wskaż punkt startowy łuku",
+                    "Wskaż punkt środkowy łuku",
+                    "Wskaż punkt końcowy łuku"
+                };
+                picker.PickPoints(3, prompts, out var picked, out var _);
+                var pts = picked?.OfType<TSG.Point>().ToList();
+                if (pts == null || pts.Count < 3) return false;
+                options.UserArcStart = new TSG.Point(pts[0].X, pts[0].Y, 0);
+                options.UserArcMid = new TSG.Point(pts[1].X, pts[1].Y, 0);
+                options.UserArcEnd = new TSG.Point(pts[2].X, pts[2].Y, 0);
+                return true;
+            }
+            catch (Exception ex) {
+                LogDebug("PickCurvedArcPoints przerwano: " + ex.Message);
+                return false;
+            }
+        }
+
         private static void CreateDimensionSet(
             TSD.View selectedView,
             TSD.PointList dimensionPoints,
             TSG.Vector directionVector,
             double offsetMillimeters,
-            DimensionType dimensionType
+            DimensionOptions options
         ) {
             LogDebug("=== CreateDimensionSet ===");
-            LogDebug("dimensionType = " + dimensionType);
+            LogDebug("dimensionType = " + options.DimensionType);
             LogDebug("dimensionPoints.Count = " + dimensionPoints.Count);
             LogDebug(
                 $"directionVector = ({directionVector.X:0.###}, {directionVector.Y:0.###}, {directionVector.Z:0.###})");
             LogDebug("offsetMillimeters = " + offsetMillimeters.ToString("0.###"));
 
-            if (dimensionType == DimensionType.Straight) {
+            if (options.DimensionType == DimensionType.Straight) {
                 var straightHandler = new TSD.StraightDimensionSetHandler();
                 straightHandler.CreateDimensionSet(
                     selectedView,
@@ -734,50 +766,55 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
-            var arcPoints = ComputeArcPoints(dimensionPoints, directionVector);
-            LogPoint("arcStart", arcPoints.Item1);
-            LogPoint("arcMid", arcPoints.Item2);
-            LogPoint("arcEnd", arcPoints.Item3);
+            TSG.Point arcStart, arcMid, arcEnd;
+            if (options.HasUserArcPoints) {
+                arcStart = options.UserArcStart;
+                arcMid = options.UserArcMid;
+                arcEnd = options.UserArcEnd;
+                LogDebug("Użyto wskazanych punktów łuku.");
+            }
+            else {
+                (arcStart, arcMid, arcEnd) = ComputeArcPoints(dimensionPoints, directionVector);
+                LogDebug("Użyto automatycznych punktów łuku.");
+            }
+
+            LogPoint("arcStart", arcStart);
+            LogPoint("arcMid", arcMid);
+            LogPoint("arcEnd", arcEnd);
 
             var curvedHandler = new TSD.CurvedDimensionSetHandler();
             curvedHandler.CreateCurvedDimensionSetOrthogonal(
                 selectedView,
-                arcPoints.Item1,
-                arcPoints.Item2,
-                arcPoints.Item3,
+                arcStart,
+                arcMid,
+                arcEnd,
                 dimensionPoints,
                 offsetMillimeters
             );
             LogDebug("Utworzono CurvedDimensionSet.");
         }
 
-        private static Tuple<TSG.Point, TSG.Point, TSG.Point> ComputeArcPoints(
+        private static (TSG.Point, TSG.Point, TSG.Point) ComputeArcPoints(
             TSD.PointList dimensionPoints,
             TSG.Vector directionVector
         ) {
-            var points = new List<TSG.Point>();
-            foreach (var item in dimensionPoints)
-                if (item is TSG.Point point)
-                    points.Add(point);
+            var points = dimensionPoints.OfType<TSG.Point>().ToList();
+            var first = points.First();
+            var last = points.Last();
 
-            var firstPoint = points.First();
-            var lastPoint = points.Last();
+            var midX = (first.X + last.X) / 2.0;
+            var midY = (first.Y + last.Y) / 2.0;
 
-            var midX = (firstPoint.X + lastPoint.X) / 2.0;
-            var midY = (firstPoint.Y + lastPoint.Y) / 2.0;
+            var spanX = last.X - first.X;
+            var spanY = last.Y - first.Y;
+            var arcDepth = Math.Sqrt(spanX * spanX + spanY * spanY) * CurvedDimensionArcDepthRatio;
 
-            var spanX = lastPoint.X - firstPoint.X;
-            var spanY = lastPoint.Y - firstPoint.Y;
-            var span = Math.Sqrt(spanX * spanX + spanY * spanY);
-            var arcDepth = span * CurvedDimensionArcDepthRatio;
+            LogDebug("ComputeArcPoints: arcDepth = " + arcDepth.ToString("0.###"));
 
-            LogDebug("ComputeArcPoints: span = " + span.ToString("0.###") +
-                     ", arcDepth = " + arcDepth.ToString("0.###"));
-
-            return Tuple.Create(
-                new TSG.Point(firstPoint.X, firstPoint.Y, 0),
+            return (
+                new TSG.Point(first.X, first.Y, 0),
                 new TSG.Point(midX + directionVector.X * arcDepth, midY + directionVector.Y * arcDepth, 0),
-                new TSG.Point(lastPoint.X, lastPoint.Y, 0)
+                new TSG.Point(last.X, last.Y, 0)
             );
         }
 

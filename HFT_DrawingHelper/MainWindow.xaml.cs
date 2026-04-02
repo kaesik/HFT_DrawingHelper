@@ -13,9 +13,12 @@ namespace HFT_DrawingHelper {
             if (MyModel.GetConnectionStatus()) {
                 InitializeComponent();
                 ModelDrawingLabel.Text = MyModel.GetInfo().ModelName.Replace(".db1", "");
+                return;
             }
-            else
-                MessageBox.Show("Brak połączenia z Tekla Structures.");
+
+            var connectionErrorWindow = new TeklaConnectionErrorWindow();
+            connectionErrorWindow.ShowDialog();
+            Close();
         }
 
         private void DrawEdgesButton_Click(object sender, RoutedEventArgs e) {

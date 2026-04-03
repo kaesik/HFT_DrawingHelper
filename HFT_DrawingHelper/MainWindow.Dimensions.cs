@@ -538,7 +538,7 @@ namespace HFT_DrawingHelper {
             public bool HasUserArcPoints => UserArcStart != null && UserArcMid != null && UserArcEnd != null;
         }
 
-        private sealed class DrawingPartWithBounds {
+        internal sealed class DrawingPartWithBounds {
             public TSD.Part DrawingPart { get; set; }
         }
 
@@ -726,7 +726,7 @@ namespace HFT_DrawingHelper {
                     "Wskaż punkt środkowy łuku",
                     "Wskaż punkt końcowy łuku"
                 };
-                picker.PickPoints(3, prompts, out var picked, out var _);
+                picker.PickPoints(3, prompts, out var picked, out _);
                 var pts = picked?.OfType<TSG.Point>().ToList();
                 if (pts == null || pts.Count < 3) return false;
                 options.UserArcStart = new TSG.Point(pts[0].X, pts[0].Y, 0);
@@ -823,6 +823,12 @@ namespace HFT_DrawingHelper {
         #region Part Selection And View Validation
 
         private static List<DrawingPartWithBounds> GetSelectedDrawingParts(TSD.DrawingHandler drawingHandler) {
+            if (_overrideSelectedParts != null)
+                return _overrideSelectedParts
+                    .Where(part => part != null)
+                    .Select(part => new DrawingPartWithBounds { DrawingPart = part })
+                    .ToList();
+
             if (drawingHandler == null) return new List<DrawingPartWithBounds>();
 
             var objectSelector = drawingHandler.GetDrawingObjectSelector();

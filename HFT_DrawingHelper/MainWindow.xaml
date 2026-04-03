@@ -5,8 +5,9 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="HFT Drawing Helper"
-        Width="420"
-        SizeToContent="Height"
+        MinWidth="420"
+        SizeToContent="WidthAndHeight"
+        MaxHeight="800"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
@@ -27,12 +28,17 @@
         </Border.Effect>
 
         <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="420" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
                 <RowDefinition Height="36" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0"
+                    Grid.ColumnSpan="2"
                     Background="{DynamicResource TitleBarBgBrush}"
                     CornerRadius="7,7,0,0"
                     MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
@@ -81,6 +87,7 @@
             </Border>
 
             <StackPanel Grid.Row="1"
+                        Grid.Column="0"
                         Margin="14,10,14,14">
 
                 <TextBlock Text="KRAWĘDZIE"
@@ -130,12 +137,13 @@
                            FontWeight="SemiBold"
                            Margin="0,0,0,6" />
 
-                <TextBox x:Name="ElementsToDimensionTextBox"
-                         Style="{StaticResource HftTextBox}"
-                         Tag="Name lub ASSEMBLY_POS"
-                         Height="34"
-                         HorizontalAlignment="Stretch"
-                         Margin="0,0,0,10" />
+                <Button x:Name="ShowSelectedPartsButton"
+                        Content="&#xE762;  Pokaż zaznaczone"
+                        Style="{StaticResource SecondaryButton}"
+                        HorizontalAlignment="Stretch"
+                        Height="32"
+                        Margin="0,0,0,10"
+                        Click="ShowSelectedPartsButton_Click" />
 
                 <Grid Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>
@@ -271,8 +279,283 @@
                                VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" />
                 </Grid>
-
             </StackPanel>
+
+            <Border x:Name="SidePanelBorder"
+                    Grid.Row="1"
+                    Grid.Column="1"
+                    Visibility="Collapsed"
+                    BorderBrush="{DynamicResource DividerColorBrush}"
+                    BorderThickness="1,0,0,0">
+
+                <Grid Width="240"
+                      Margin="14,10,14,14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0"
+                          Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0"
+                                   Text="ZAZNACZONE ELEMENTY"
+                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+
+                        <Button Grid.Column="1"
+                                Style="{StaticResource IconButton}"
+                                Content="&#xE8BB;"
+                                Width="22"
+                                Height="22"
+                                FontSize="10"
+                                ToolTip="Zamknij panel"
+                                Click="CloseSidePanelButton_Click" />
+                    </Grid>
+
+                    <TextBlock Grid.Row="1"
+                               Text="Zaznacz elementy do zwymiarowania:"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,8" />
+
+                    <StackPanel Grid.Row="2"
+                                Orientation="Horizontal"
+                                Margin="0,0,0,8">
+                        <Button Content="Zaznacz wszystkie"
+                                Style="{StaticResource SecondaryButton}"
+                                Height="26"
+                                FontSize="11"
+                                Margin="0,0,4,0"
+                                Click="SelectAllPartsButton_Click" />
+                        <Button Content="Odznacz wszystkie"
+                                Style="{StaticResource SecondaryButton}"
+                                Height="26"
+                                FontSize="11"
+                                Click="DeselectAllPartsButton_Click" />
+                    </StackPanel>
+
+                    <ListBox x:Name="PartItemsList"
+                             Grid.Row="3"
+                             MaxHeight="400"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.CanContentScroll="False">
+
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="0,0,0,6" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="BorderThickness" Value="0" />
+                                <Setter Property="Focusable" Value="False" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <ContentPresenter />
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource ControlBgBrush}"
+                                        BorderBrush="{DynamicResource DividerColorBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="4"
+                                        Padding="0">
+
+                                    <StackPanel>
+                                        <Border CornerRadius="4"
+                                                Padding="0">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="Transparent" />
+                                                    <Setter Property="BorderBrush" Value="Transparent" />
+                                                    <Setter Property="BorderThickness" Value="1.5" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPreviewSelected}" Value="True">
+                                                            <Setter Property="Background"
+                                                                    Value="{DynamicResource ControlBgBrush}" />
+                                                            <Setter Property="BorderBrush"
+                                                                    Value="{DynamicResource AccentColorBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+
+                                            <Grid Margin="8,6"
+                                                  MouseLeftButtonDown="GroupHeader_MouseLeftButtonDown">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <CheckBox Grid.Column="0"
+                                                          IsThreeState="True"
+                                                          IsChecked="{Binding IsChecked, Mode=OneWay}"
+                                                          Click="GroupCheckBox_Click"
+                                                          Style="{StaticResource HftCheckBox}"
+                                                          VerticalAlignment="Center" />
+
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding GroupName}"
+                                                           Foreground="{DynamicResource TextPrimaryBrush}"
+                                                           FontSize="12"
+                                                           FontWeight="SemiBold"
+                                                           VerticalAlignment="Center"
+                                                           Margin="8,0,0,0" />
+
+                                                <StackPanel Grid.Column="2"
+                                                            Orientation="Horizontal"
+                                                            VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding ItemCount, StringFormat=({0})}"
+                                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                                               FontSize="12"
+                                                               Margin="0,0,8,0"
+                                                               VerticalAlignment="Center" />
+
+                                                    <ToggleButton IsChecked="{Binding IsExpanded, Mode=TwoWay}"
+                                                                  Width="22"
+                                                                  Height="22"
+                                                                  Background="Transparent"
+                                                                  BorderThickness="0"
+                                                                  Cursor="Hand">
+                                                        <TextBlock Text="▾"
+                                                                   FontSize="12"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="RenderTransformOrigin"
+                                                                            Value="0.5,0.5" />
+                                                                    <Setter Property="RenderTransform">
+                                                                        <Setter.Value>
+                                                                            <RotateTransform Angle="0" />
+                                                                        </Setter.Value>
+                                                                    </Setter>
+                                                                    <Setter Property="Foreground"
+                                                                            Value="{DynamicResource TextSecondaryBrush}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsExpanded}"
+                                                                            Value="True">
+                                                                            <Setter Property="RenderTransform">
+                                                                                <Setter.Value>
+                                                                                    <RotateTransform Angle="180" />
+                                                                                </Setter.Value>
+                                                                            </Setter>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </ToggleButton>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+
+                                        <ItemsControl ItemsSource="{Binding Items}">
+                                            <ItemsControl.Style>
+                                                <Style TargetType="ItemsControl">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsExpanded}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ItemsControl.Style>
+
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Padding="6,5"
+                                                            CornerRadius="4"
+                                                            Margin="14,1,8,1"
+                                                            MouseLeftButtonDown="PartItem_MouseLeftButtonDown">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="Transparent" />
+                                                                <Setter Property="BorderBrush" Value="Transparent" />
+                                                                <Setter Property="BorderThickness" Value="1.5" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsPreviewSelected}"
+                                                                        Value="True">
+                                                                        <Setter Property="Background"
+                                                                            Value="{DynamicResource ControlBgBrush}" />
+                                                                        <Setter Property="BorderBrush"
+                                                                            Value="{DynamicResource AccentColorBrush}" />
+                                                                    </DataTrigger>
+                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                        <Setter Property="Background"
+                                                                            Value="{DynamicResource SurfaceHoverBrush}" />
+                                                                    </Trigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+
+                                                            <CheckBox Grid.Column="0"
+                                                                      IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                                                                      Style="{StaticResource HftCheckBox}"
+                                                                      VerticalAlignment="Center" />
+
+                                                            <StackPanel Grid.Column="1"
+                                                                        Margin="8,0,0,0">
+                                                                <TextBlock Text="{Binding DisplayName}"
+                                                                           Foreground="{DynamicResource TextPrimaryBrush}"
+                                                                           FontSize="12"
+                                                                           TextTrimming="CharacterEllipsis" />
+
+                                                                <TextBlock Text="{Binding SecondaryInfo}"
+                                                                           Foreground="{DynamicResource TextTertiaryBrush}"
+                                                                           FontSize="10"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           Margin="0,1,0,0">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
+                                                                            <Style.Triggers>
+                                                                                <Trigger Property="Text"
+                                                                                    Value="">
+                                                                                    <Setter Property="Visibility"
+                                                                                        Value="Collapsed" />
+                                                                                </Trigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </TextBlock.Style>
+                                                                </TextBlock>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
         </Grid>
     </Border>
 </Window>

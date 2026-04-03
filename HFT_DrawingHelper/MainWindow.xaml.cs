@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using TS = Tekla.Structures;
@@ -32,6 +33,22 @@ namespace HFT_DrawingHelper {
         }
 
         private void AddDimensionsButton_Click(object sender, RoutedEventArgs e) {
+            if (SidePanelBorder.Visibility == Visibility.Visible && _partItems.Count > 0) {
+                var checkedParts = _partItems
+                    .Where(i => i.IsChecked && i.DrawingPart != null)
+                    .Select(i => i.DrawingPart)
+                    .ToList();
+
+                if (checkedParts.Count == 0) {
+                    MessageBox.Show("Nie zaznaczono żadnych elementów na liście.");
+                    return;
+                }
+
+                _overrideSelectedParts = checkedParts;
+            }
+            else
+                _overrideSelectedParts = null;
+
             var dimensionType = CurvedDimensionRadioButton.IsChecked == true
                 ? DimensionType.Curved
                 : DimensionType.Straight;
@@ -92,10 +109,16 @@ namespace HFT_DrawingHelper {
 
             if (optionsList.Count == 0) {
                 MessageBox.Show("Nie zaznaczono żadnego położenia wymiarów do utworzenia.");
+                _overrideSelectedParts = null;
                 return;
             }
 
-            AddDimensions(optionsList);
+            try {
+                AddDimensions(optionsList);
+            }
+            finally {
+                _overrideSelectedParts = null;
+            }
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {

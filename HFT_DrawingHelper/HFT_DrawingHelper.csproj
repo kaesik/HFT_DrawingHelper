@@ -163,6 +163,9 @@
             <Generator>MSBuild:Compile</Generator>
             <SubType>Designer</SubType>
         </ApplicationDefinition>
+        <Compile Include="MainWindow.PartSelector.cs"/>
+        <Compile Include="SelectedPartGroup.cs"/>
+        <Compile Include="SelectedPartItem.cs"/>
         <Compile Include="TeklaConnectionErrorWindow.xaml.cs">
             <DependentUpon>TeklaConnectionErrorWindow.xaml</DependentUpon>
         </Compile>

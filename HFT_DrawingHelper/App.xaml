@@ -5,13 +5,9 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <!-- Dark theme loaded by default; ThemeService swaps this at runtime -->
                 <ResourceDictionary Source="Themes/DarkTheme.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- ═══════════════════════════════════════
-                 Icon Button  (title bar actions)
-            ════════════════════════════════════════ -->
             <Style x:Key="IconButton" TargetType="Button">
                 <Setter Property="Width" Value="32" />
                 <Setter Property="Height" Value="32" />
@@ -32,11 +28,13 @@
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="border" Property="Background"
+                                    <Setter TargetName="border"
+                                            Property="Background"
                                             Value="{DynamicResource SurfaceHoverBrush}" />
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="border" Property="Background"
+                                    <Setter TargetName="border"
+                                            Property="Background"
                                             Value="{DynamicResource ControlBgBrush}" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
@@ -45,10 +43,9 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════════════════════════
-                 Close Button  (top-right, red hover)
-            ════════════════════════════════════════ -->
-            <Style x:Key="CloseButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+            <Style x:Key="CloseButton"
+                   TargetType="Button"
+                   BasedOn="{StaticResource IconButton}">
                 <Setter Property="Width" Value="40" />
                 <Setter Property="Template">
                     <Setter.Value>
@@ -61,8 +58,11 @@
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="border" Property="Background" Value="#C42B1C" />
-                                    <Setter Property="Foreground" Value="White" />
+                                    <Setter TargetName="border"
+                                            Property="Background"
+                                            Value="#C42B1C" />
+                                    <Setter Property="Foreground"
+                                            Value="White" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -70,9 +70,6 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════════════════════════
-                 Primary Button
-            ════════════════════════════════════════ -->
             <Style x:Key="PrimaryButton" TargetType="Button">
                 <Setter Property="Background" Value="{DynamicResource AccentColorBrush}" />
                 <Setter Property="Foreground" Value="White" />
@@ -94,11 +91,14 @@
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="border" Property="Background"
+                                    <Setter TargetName="border"
+                                            Property="Background"
                                             Value="{DynamicResource AccentDarkBrush}" />
                                 </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
-                                    <Setter TargetName="border" Property="Opacity" Value="0.45" />
+                                    <Setter TargetName="border"
+                                            Property="Opacity"
+                                            Value="0.45" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -106,9 +106,53 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════════════════════════
-                 TextBox  (with placeholder support)
-            ════════════════════════════════════════ -->
+            <Style x:Key="SecondaryButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderColorBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="FontFamily" Value="Segoe UI Variable, Segoe UI" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="FontWeight" Value="Normal" />
+                <Setter Property="Padding" Value="14,6" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="border"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="border"
+                                            Property="Background"
+                                            Value="{DynamicResource SurfaceHoverBrush}" />
+                                    <Setter TargetName="border"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource AccentColorBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="border"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlBgBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="border"
+                                            Property="Opacity"
+                                            Value="0.45" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <Style x:Key="HftTextBox" TargetType="TextBox">
                 <Setter Property="Background" Value="{DynamicResource ControlBgBrush}" />
                 <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -145,14 +189,19 @@
                             </Grid>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="Text" Value="">
-                                    <Setter TargetName="Watermark" Property="Visibility" Value="Visible" />
+                                    <Setter TargetName="Watermark"
+                                            Property="Visibility"
+                                            Value="Visible" />
                                 </Trigger>
                                 <Trigger Property="IsKeyboardFocused" Value="True">
-                                    <Setter TargetName="border" Property="BorderBrush"
+                                    <Setter TargetName="border"
+                                            Property="BorderBrush"
                                             Value="{DynamicResource AccentColorBrush}" />
                                 </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
-                                    <Setter TargetName="border" Property="Opacity" Value="0.5" />
+                                    <Setter TargetName="border"
+                                            Property="Opacity"
+                                            Value="0.5" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -160,9 +209,6 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════════════════════════
-                 RadioButton
-            ════════════════════════════════════════ -->
             <Style x:Key="HftRadioButton" TargetType="RadioButton">
                 <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
                 <Setter Property="FontFamily" Value="Segoe UI Variable, Segoe UI" />
@@ -171,15 +217,19 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="RadioButton">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <Grid Width="16" Height="16">
+                            <StackPanel Orientation="Horizontal"
+                                        VerticalAlignment="Center">
+                                <Grid Width="16"
+                                      Height="16">
                                     <Ellipse x:Name="outer"
-                                             Width="14" Height="14"
+                                             Width="14"
+                                             Height="14"
                                              Stroke="{DynamicResource BorderColorBrush}"
                                              StrokeThickness="1.5"
                                              Fill="{DynamicResource ControlBgBrush}" />
                                     <Ellipse x:Name="inner"
-                                             Width="6" Height="6"
+                                             Width="6"
+                                             Height="6"
                                              Fill="{DynamicResource AccentColorBrush}"
                                              Visibility="Collapsed" />
                                 </Grid>
@@ -189,12 +239,16 @@
                             </StackPanel>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsChecked" Value="True">
-                                    <Setter TargetName="outer" Property="Stroke"
+                                    <Setter TargetName="outer"
+                                            Property="Stroke"
                                             Value="{DynamicResource AccentColorBrush}" />
-                                    <Setter TargetName="inner" Property="Visibility" Value="Visible" />
+                                    <Setter TargetName="inner"
+                                            Property="Visibility"
+                                            Value="Visible" />
                                 </Trigger>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="outer" Property="Stroke"
+                                    <Setter TargetName="outer"
+                                            Property="Stroke"
                                             Value="{DynamicResource AccentColorBrush}" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
@@ -203,9 +257,6 @@
                 </Setter>
             </Style>
 
-            <!-- ═══════════════════════════════════════
-                 CheckBox
-            ════════════════════════════════════════ -->
             <Style x:Key="HftCheckBox" TargetType="CheckBox">
                 <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
                 <Setter Property="FontFamily" Value="Segoe UI Variable, Segoe UI" />
@@ -214,37 +265,99 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="CheckBox">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal"
+                                        VerticalAlignment="Center">
                                 <Border x:Name="box"
-                                        Width="14" Height="14"
-                                        CornerRadius="3"
+                                        Width="18"
+                                        Height="18"
+                                        CornerRadius="4"
                                         BorderThickness="1.5"
-                                        BorderBrush="{DynamicResource BorderColorBrush}"
-                                        Background="{DynamicResource ControlBgBrush}">
-                                    <TextBlock x:Name="checkMark"
-                                               Text="&#xE73E;"
-                                               FontFamily="Segoe MDL2 Assets"
-                                               FontSize="9"
-                                               Foreground="White"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center"
-                                               Visibility="Collapsed" />
+                                        BorderBrush="{DynamicResource AccentColorBrush}"
+                                        Background="{DynamicResource WindowBgBrush}">
+                                    <Grid>
+                                        <TextBlock x:Name="checkMark"
+                                                   Text="&#xE73E;"
+                                                   FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="11"
+                                                   Foreground="White"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Visibility="Collapsed" />
+
+                                        <Border x:Name="indeterminateMark"
+                                                Width="10"
+                                                Height="2.5"
+                                                CornerRadius="1"
+                                                Background="White"
+                                                HorizontalAlignment="Center"
+                                                VerticalAlignment="Center"
+                                                Visibility="Collapsed" />
+                                    </Grid>
                                 </Border>
+
                                 <ContentPresenter Margin="6,0,0,0"
                                                   VerticalAlignment="Center"
                                                   RecognizesAccessKey="True" />
                             </StackPanel>
+
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsChecked" Value="True">
-                                    <Setter TargetName="box" Property="Background"
+                                    <Setter TargetName="box"
+                                            Property="Background"
                                             Value="{DynamicResource AccentColorBrush}" />
-                                    <Setter TargetName="box" Property="BorderBrush"
+                                    <Setter TargetName="box"
+                                            Property="BorderBrush"
                                             Value="{DynamicResource AccentColorBrush}" />
-                                    <Setter TargetName="checkMark" Property="Visibility" Value="Visible" />
+                                    <Setter TargetName="checkMark"
+                                            Property="Visibility"
+                                            Value="Visible" />
+                                    <Setter TargetName="indeterminateMark"
+                                            Property="Visibility"
+                                            Value="Collapsed" />
                                 </Trigger>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="box" Property="BorderBrush"
+
+                                <Trigger Property="IsChecked" Value="False">
+                                    <Setter TargetName="box"
+                                            Property="Background"
+                                            Value="{DynamicResource WindowBgBrush}" />
+                                    <Setter TargetName="box"
+                                            Property="BorderBrush"
                                             Value="{DynamicResource AccentColorBrush}" />
+                                    <Setter TargetName="checkMark"
+                                            Property="Visibility"
+                                            Value="Collapsed" />
+                                    <Setter TargetName="indeterminateMark"
+                                            Property="Visibility"
+                                            Value="Collapsed" />
+                                </Trigger>
+
+                                <Trigger Property="IsChecked" Value="{x:Null}">
+                                    <Setter TargetName="box"
+                                            Property="Background"
+                                            Value="{DynamicResource AccentColorBrush}" />
+                                    <Setter TargetName="box"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource AccentColorBrush}" />
+                                    <Setter TargetName="checkMark"
+                                            Property="Visibility"
+                                            Value="Collapsed" />
+                                    <Setter TargetName="indeterminateMark"
+                                            Property="Visibility"
+                                            Value="Visible" />
+                                </Trigger>
+
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="box"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource AccentDarkBrush}" />
+                                </Trigger>
+
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="box"
+                                            Property="Opacity"
+                                            Value="0.5" />
+                                    <Setter Property="Opacity"
+                                            Value="0.7" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>

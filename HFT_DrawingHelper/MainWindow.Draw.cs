@@ -78,7 +78,9 @@ namespace HFT_DrawingHelper {
             DrawEdges(selectedView, detectionResult.EdgesByNumber);
             drawing.CommitChanges();
 
-            return FormatEdgeNumbersForTextBox(numberedGroups.Keys.OrderBy(number => number).ToList());
+            return FormatEdgeNumbersForTextBox(
+                numberedGroups.Keys.OrderBy(number => number).ToList()
+            );
         }
 
         private static EdgeDetectionResult DetectEdgesFromSelectedView(TSD.View selectedView) {
@@ -145,8 +147,7 @@ namespace HFT_DrawingHelper {
             List<TSM.Part> modelParts
         ) {
             var edgesByNumber = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
-            if (selectedView == null) return edgesByNumber;
-            if (modelParts == null || modelParts.Count == 0) return edgesByNumber;
+            if (selectedView == null || modelParts == null || modelParts.Count == 0) return edgesByNumber;
 
             var workPlaneHandler = MyModel.GetWorkPlaneHandler();
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
@@ -222,7 +223,7 @@ namespace HFT_DrawingHelper {
                 points.Add(new TSG.Point(point.X, point.Y, 0));
             }
 
-            points = RemoveNearDuplicates(points, 0.5);
+            points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
             points = SortByAngle(points);
 
             if (points.Count < 3) return edges;
@@ -275,8 +276,7 @@ namespace HFT_DrawingHelper {
             Func<List<TSG.Point>, List<(TSG.Point A, TSG.Point B)>> buildEnvelopeEdges
         ) where TPart : TSM.Part {
             var edgesByNumber = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
-            if (selectedView == null) return edgesByNumber;
-            if (modelParts == null || modelParts.Count == 0) return edgesByNumber;
+            if (selectedView == null || modelParts == null || modelParts.Count == 0) return edgesByNumber;
 
             var part = FindFirstPart<TPart>(modelParts);
             if (part == null) return edgesByNumber;
@@ -428,7 +428,8 @@ namespace HFT_DrawingHelper {
             foreach (var point in uniquePoints) {
                 var binIndex = (int)Math.Floor((point.X - minimumX) / binWidth);
 
-                if (!bins.ContainsKey(binIndex)) bins[binIndex] = new List<TSG.Point>();
+                if (!bins.ContainsKey(binIndex))
+                    bins[binIndex] = new List<TSG.Point>();
 
                 bins[binIndex].Add(point);
             }
@@ -547,8 +548,7 @@ namespace HFT_DrawingHelper {
         #region Drawing And Numbering
 
         private static void DrawEdges(TSD.View view, Dictionary<int, Tuple<TSG.Point, TSG.Point>> edgesByNumber) {
-            if (view == null) return;
-            if (edgesByNumber == null || edgesByNumber.Count == 0) return;
+            if (view == null || edgesByNumber == null || edgesByNumber.Count == 0) return;
 
             var lineAttributes = new TSD.Line.LineAttributes {
                 Line = new TSD.LineTypeAttributes(TSD.LineTypes.SolidLine, TSD.DrawingColors.Red)
@@ -618,10 +618,12 @@ namespace HFT_DrawingHelper {
 
                     if (start > end) (start, end) = (end, start);
 
-                    for (var index = start; index <= end; index++) result.Add(index);
+                    for (var index = start; index <= end; index++)
+                        result.Add(index);
                 }
                 else {
-                    if (int.TryParse(token, out var number)) result.Add(number);
+                    if (int.TryParse(token, out var number))
+                        result.Add(number);
                 }
 
             return result;
@@ -658,7 +660,8 @@ namespace HFT_DrawingHelper {
                     IsPolyline = polylineGroup.EdgeSegments.Count > 1
                 };
 
-                foreach (var edgeSegment in polylineGroup.EdgeSegments) numberedGroup.EdgeSegments.Add(edgeSegment);
+                foreach (var edgeSegment in polylineGroup.EdgeSegments)
+                    numberedGroup.EdgeSegments.Add(edgeSegment);
 
                 foreach (var polylinePoint in polylineGroup.PolylinePoints)
                     numberedGroup.PolylinePoints.Add(polylinePoint);
@@ -972,12 +975,14 @@ namespace HFT_DrawingHelper {
             var fromToGlobal = TSG.MatrixFactory.FromCoordinateSystem(fromCoordinateSystem);
             var globalToTarget = TSG.MatrixFactory.ToCoordinateSystem(toCoordinateSystem);
 
-            result.AddRange(from point in points
+            result.AddRange(
+                from point in points
                 select fromToGlobal.Transform(point)
                 into globalPoint
                 select globalToTarget.Transform(globalPoint)
                 into targetPoint
-                select new TSG.Point(targetPoint.X, targetPoint.Y, 0));
+                select new TSG.Point(targetPoint.X, targetPoint.Y, 0)
+            );
 
             return result;
         }
@@ -1129,7 +1134,8 @@ namespace HFT_DrawingHelper {
             var firstVectorLength = Math.Sqrt(firstVectorX * firstVectorX + firstVectorY * firstVectorY);
             var secondVectorLength = Math.Sqrt(secondVectorX * secondVectorX + secondVectorY * secondVectorY);
 
-            if (firstVectorLength < minimumSegmentLength || secondVectorLength < minimumSegmentLength) return 180.0;
+            if (firstVectorLength < minimumSegmentLength || secondVectorLength < minimumSegmentLength)
+                return 180.0;
 
             var dotProduct = firstVectorX * secondVectorX + firstVectorY * secondVectorY;
             var cosineValue = dotProduct / (firstVectorLength * secondVectorLength);
@@ -1144,19 +1150,11 @@ namespace HFT_DrawingHelper {
             if (points == null || points.Count == 0) return new List<TSG.Point>();
 
             var seen = new HashSet<(long, long)>();
-            var result = new List<TSG.Point>();
 
-            foreach (var point in points) {
-                var key = (
-                    (long)Math.Round(point.X / epsilon),
-                    (long)Math.Round(point.Y / epsilon)
-                );
-
-                if (seen.Add(key))
-                    result.Add(point);
-            }
-
-            return result;
+            return (from point in points
+                let key = ((long)Math.Round(point.X / epsilon), (long)Math.Round(point.Y / epsilon))
+                where seen.Add(key)
+                select point).ToList();
         }
 
         private static List<TSG.Point> SortByAngle(List<TSG.Point> points) {

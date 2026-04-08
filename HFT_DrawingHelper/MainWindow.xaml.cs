@@ -25,7 +25,8 @@ namespace HFT_DrawingHelper {
         private void DrawEdgesButton_Click(object sender, RoutedEventArgs e) {
             var formattedNumbers = DrawEdgesWithNumbers();
 
-            if (!string.IsNullOrWhiteSpace(formattedNumbers)) EdgeNumbersTextBox.Text = formattedNumbers;
+            if (!string.IsNullOrWhiteSpace(formattedNumbers))
+                EdgeNumbersTextBox.Text = formattedNumbers;
         }
 
         private void AddSectionsButton_Click(object sender, RoutedEventArgs e) {
@@ -33,79 +34,9 @@ namespace HFT_DrawingHelper {
         }
 
         private void AddDimensionsButton_Click(object sender, RoutedEventArgs e) {
-            if (SidePanelBorder.Visibility == Visibility.Visible && _partItems.Count > 0) {
-                var checkedParts = _partItems
-                    .Where(i => i.IsChecked && i.DrawingPart != null)
-                    .Select(i => i.DrawingPart)
-                    .ToList();
+            if (!TryApplyCheckedPartOverride()) return;
 
-                if (checkedParts.Count == 0) {
-                    MessageBox.Show("Nie zaznaczono żadnych elementów na liście.");
-                    return;
-                }
-
-                _overrideSelectedParts = checkedParts;
-            }
-            else
-                _overrideSelectedParts = null;
-
-            var dimensionType = CurvedDimensionRadioButton.IsChecked == true
-                ? DimensionType.Curved
-                : DimensionType.Straight;
-
-            var createAbove = DimensionAboveCheckBox.IsChecked == true;
-            var createBelow = DimensionBelowCheckBox.IsChecked == true;
-            var createRight = DimensionRightCheckBox.IsChecked == true;
-            var createLeft = DimensionLeftCheckBox.IsChecked == true;
-
-            var horizontalFar = HorizontalTotalDimensionCheckBox.IsChecked == true;
-            var verticalFar = VerticalTotalDimensionCheckBox.IsChecked == true;
-
-            var optionsList = new List<DimensionOptions>();
-
-            if (createAbove)
-                optionsList.Add(new DimensionOptions {
-                    DimensionType = dimensionType,
-                    HorizontalPlacement = HorizontalDimensionPlacement.Above,
-                    VerticalPlacement = VerticalDimensionPlacement.Right,
-                    CreateHorizontal = true,
-                    CreateVertical = false,
-                    HorizontalFarPlacement = horizontalFar,
-                    VerticalFarPlacement = verticalFar
-                });
-
-            if (createBelow)
-                optionsList.Add(new DimensionOptions {
-                    DimensionType = dimensionType,
-                    HorizontalPlacement = HorizontalDimensionPlacement.Below,
-                    VerticalPlacement = VerticalDimensionPlacement.Right,
-                    CreateHorizontal = true,
-                    CreateVertical = false,
-                    HorizontalFarPlacement = horizontalFar,
-                    VerticalFarPlacement = verticalFar
-                });
-
-            if (createRight)
-                optionsList.Add(new DimensionOptions {
-                    DimensionType = dimensionType,
-                    HorizontalPlacement = HorizontalDimensionPlacement.Above,
-                    VerticalPlacement = VerticalDimensionPlacement.Right,
-                    CreateHorizontal = false,
-                    CreateVertical = true,
-                    HorizontalFarPlacement = horizontalFar,
-                    VerticalFarPlacement = verticalFar
-                });
-
-            if (createLeft)
-                optionsList.Add(new DimensionOptions {
-                    DimensionType = dimensionType,
-                    HorizontalPlacement = HorizontalDimensionPlacement.Above,
-                    VerticalPlacement = VerticalDimensionPlacement.Left,
-                    CreateHorizontal = false,
-                    CreateVertical = true,
-                    HorizontalFarPlacement = horizontalFar,
-                    VerticalFarPlacement = verticalFar
-                });
+            var optionsList = BuildDimensionOptionsFromUi();
 
             if (optionsList.Count == 0) {
                 MessageBox.Show("Nie zaznaczono żadnego położenia wymiarów do utworzenia.");
@@ -134,6 +65,98 @@ namespace HFT_DrawingHelper {
         }
 
         #region Helpers
+
+        private bool TryApplyCheckedPartOverride() {
+            if (SidePanelBorder.Visibility != Visibility.Visible || _partItems.Count == 0) {
+                _overrideSelectedParts = null;
+                return true;
+            }
+
+            var checkedParts = _partItems
+                .Where(item => item.IsChecked && item.DrawingPart != null)
+                .Select(item => item.DrawingPart)
+                .ToList();
+
+            if (checkedParts.Count == 0) {
+                MessageBox.Show("Nie zaznaczono żadnych elementów na liście.");
+                return false;
+            }
+
+            _overrideSelectedParts = checkedParts;
+            return true;
+        }
+
+        private List<DimensionOptions> BuildDimensionOptionsFromUi() {
+            var dimensionType = CurvedDimensionRadioButton.IsChecked == true
+                ? DimensionType.Curved
+                : DimensionType.Straight;
+
+            var horizontalScope = HorizontalTotalDimensionCheckBox.IsChecked == true
+                ? DimensionScope.Overall
+                : DimensionScope.PerElement;
+
+            var verticalScope = VerticalTotalDimensionCheckBox.IsChecked == true
+                ? DimensionScope.Overall
+                : DimensionScope.PerElement;
+
+            var optionsList = new List<DimensionOptions>();
+
+            AddDimensionOptionIfChecked(
+                optionsList,
+                DimensionAboveCheckBox.IsChecked == true,
+                dimensionType,
+                DimensionAxis.Horizontal,
+                DimensionPlacement.Above,
+                horizontalScope
+            );
+
+            AddDimensionOptionIfChecked(
+                optionsList,
+                DimensionBelowCheckBox.IsChecked == true,
+                dimensionType,
+                DimensionAxis.Horizontal,
+                DimensionPlacement.Below,
+                horizontalScope
+            );
+
+            AddDimensionOptionIfChecked(
+                optionsList,
+                DimensionRightCheckBox.IsChecked == true,
+                dimensionType,
+                DimensionAxis.Vertical,
+                DimensionPlacement.Right,
+                verticalScope
+            );
+
+            AddDimensionOptionIfChecked(
+                optionsList,
+                DimensionLeftCheckBox.IsChecked == true,
+                dimensionType,
+                DimensionAxis.Vertical,
+                DimensionPlacement.Left,
+                verticalScope
+            );
+
+            return optionsList;
+        }
+
+        private static void AddDimensionOptionIfChecked(
+            List<DimensionOptions> optionsList,
+            bool isChecked,
+            DimensionType dimensionType,
+            DimensionAxis axis,
+            DimensionPlacement placement,
+            DimensionScope scope
+        ) {
+            if (!isChecked) return;
+
+            optionsList.Add(new DimensionOptions {
+                DimensionType = dimensionType,
+                Axis = axis,
+                Placement = placement,
+                Scope = scope
+            });
+        }
 
         private static TSD.View GetSelectedViewOrShowMessage(TSD.DrawingHandler drawingHandler) {
             var objectSelector = drawingHandler.GetDrawingObjectSelector();

@@ -160,7 +160,7 @@
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="FontFamily" Value="Segoe UI Variable, Segoe UI" />
                 <Setter Property="FontSize" Value="12" />
-                <Setter Property="Padding" Value="10,6" />
+                <Setter Property="Padding" Value="10,0" />
                 <Setter Property="CaretBrush" Value="{DynamicResource AccentColorBrush}" />
                 <Setter Property="SelectionBrush" Value="{DynamicResource AccentColorBrush}" />
                 <Setter Property="Template">

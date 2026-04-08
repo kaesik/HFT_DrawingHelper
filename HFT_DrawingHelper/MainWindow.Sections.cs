@@ -16,37 +16,82 @@ namespace HFT_DrawingHelper {
             var drawing = drawingHandler.GetActiveDrawing();
             if (drawing == null) return;
 
-            var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
-            if (selectedView == null) return;
+            var pickedView = GetSelectedViewOrShowMessage(drawingHandler);
+            if (pickedView == null) return;
 
-            if (!HasExactlyOnePart(selectedView)) {
-                MessageBox.Show("Widok musi zawierać dokładnie jeden element typu Part.");
+            var drawingParts = GetSelectedDrawingParts(drawingHandler);
+            TSD.View commonView;
+
+            if (drawingParts.Count == 0) {
+                var singleDrawingPart = GetSingleDrawingPartFromPickedView(pickedView);
+                if (singleDrawingPart == null) {
+                    MessageBox.Show(
+                        "Jeśli nie zaznaczasz elementu, wskazany widok musi zawierać dokładnie jeden element typu Part.");
+                    return;
+                }
+
+                drawingParts = new List<DrawingPartWithBounds> {
+                    singleDrawingPart
+                };
+
+                commonView = singleDrawingPart.DrawingPart.GetView() as TSD.View;
+                if (commonView == null) {
+                    MessageBox.Show("Nie udało się ustalić widoku elementu.");
+                    return;
+                }
+            }
+            else {
+                commonView = GetCommonViewFromSelectedParts(drawingParts);
+                if (commonView == null) {
+                    MessageBox.Show("Zaznaczone elementy muszą należeć do jednego widoku.");
+                    return;
+                }
+            }
+
+            if (!HasExactlyOnePart(commonView)) {
+                MessageBox.Show(
+                    "Przekroje można tworzyć tylko dla widoku zawierającego dokładnie jeden element typu Part.");
                 return;
             }
 
-            var detectionResult = DetectEdgesFromSelectedView(selectedView);
-
-            if (!detectionResult.HasEdges) {
-                MessageBox.Show(detectionResult.ErrorMessage);
+            var outlineSnapshots = GetPartOutlineSnapshots(commonView, drawingParts);
+            if (outlineSnapshots == null || outlineSnapshots.Count == 0) {
+                MessageBox.Show("Nie udało się wyznaczyć krawędzi dla zaznaczonych elementów.");
                 return;
             }
 
-            var requestedGroupNumbers = ParseEdgeNumbers(edgeNumbersInput);
+            var edgesByNumber = BuildEdgesByNumberFromOutlines(outlineSnapshots);
+            if (edgesByNumber == null || edgesByNumber.Count == 0) {
+                MessageBox.Show("Nie znaleziono krawędzi do utworzenia przekrojów.");
+                return;
+            }
 
-            var groupsByGroupNumber = BuildNumberedEdgeGroups(
-                detectionResult.EdgesByNumber,
+            var numberedGroups = BuildNumberedEdgeGroups(
+                edgesByNumber,
                 JoinToleranceMillimeters,
                 NearStraightAngleDegrees
             );
 
-            var sectionEdgesByGroupNumber = groupsByGroupNumber
+            numberedGroups = FilterShortNumberedEdgeGroups(
+                numberedGroups,
+                MinimumNumberedEdgeLengthMillimeters
+            );
+
+            if (numberedGroups.Count == 0) {
+                MessageBox.Show("Nie znaleziono numerowanych krawędzi do utworzenia przekrojów.");
+                return;
+            }
+
+            var requestedGroupNumbers = ParseGroupNumbers(edgeNumbersInput);
+
+            var sectionEdgesByGroupNumber = numberedGroups
                 .Where(pair => pair.Value?.SectionEdge != null)
                 .ToDictionary(pair => pair.Key, pair => pair.Value.SectionEdge);
 
             var filteredSectionEdges = FilterEdgesOrShowMessage(sectionEdgesByGroupNumber, requestedGroupNumbers);
-            if (filteredSectionEdges == null) return;
+            if (filteredSectionEdges == null || filteredSectionEdges.Count == 0) return;
 
-            CreateSectionViewsFromEdges(selectedView, filteredSectionEdges);
+            CreateSectionViewsFromEdges(commonView, filteredSectionEdges);
             drawing.CommitChanges();
         }
 
@@ -61,45 +106,45 @@ namespace HFT_DrawingHelper {
             if (baseView == null) return;
             if (edgesByNumber == null || edgesByNumber.Count == 0) return;
 
-            var (viewAttrs, markAttrs) = GetSectionAttributes();
+            var (viewAttributes, markAttributes) = GetSectionAttributes();
 
             var baseBox = baseView.GetAxisAlignedBoundingBox();
             var cursorX = baseBox.UpperRight.X + Gap;
             var cursorY = baseBox.UpperRight.Y;
 
-            foreach (var pair in edgesByNumber.OrderBy(x => x.Key)) {
+            foreach (var pair in edgesByNumber.OrderBy(item => item.Key)) {
                 var edge = pair.Value;
                 if (edge == null) continue;
 
-                var edgeA = edge.Item1;
-                var edgeB = edge.Item2;
+                var edgeStart = edge.Item1;
+                var edgeEnd = edge.Item2;
 
-                var midPoint = new TSG.Point(
-                    (edgeA.X + edgeB.X) * 0.5,
-                    (edgeA.Y + edgeB.Y) * 0.5,
-                    (edgeA.Z + edgeB.Z) * 0.5
+                var middlePoint = new TSG.Point(
+                    (edgeStart.X + edgeEnd.X) * 0.5,
+                    (edgeStart.Y + edgeEnd.Y) * 0.5,
+                    (edgeStart.Z + edgeEnd.Z) * 0.5
                 );
 
-                var dx = edgeB.X - edgeA.X;
-                var dy = edgeB.Y - edgeA.Y;
+                var dx = edgeEnd.X - edgeStart.X;
+                var dy = edgeEnd.Y - edgeStart.Y;
                 var length = Math.Sqrt(dx * dx + dy * dy);
                 if (length < 1e-6) continue;
 
-                var nx = -dy / length;
-                var ny = dx / length;
+                var normalX = -dy / length;
+                var normalY = dx / length;
 
                 const double halfLength = SectionLineLengthMillimeters * 0.5;
 
                 var startPoint = new TSG.Point(
-                    midPoint.X - nx * halfLength,
-                    midPoint.Y - ny * halfLength,
-                    midPoint.Z
+                    middlePoint.X - normalX * halfLength,
+                    middlePoint.Y - normalY * halfLength,
+                    middlePoint.Z
                 );
 
                 var endPoint = new TSG.Point(
-                    midPoint.X + nx * halfLength,
-                    midPoint.Y + ny * halfLength,
-                    midPoint.Z
+                    middlePoint.X + normalX * halfLength,
+                    middlePoint.Y + normalY * halfLength,
+                    middlePoint.Z
                 );
 
                 NormalizeSectionDirection(ref startPoint, ref endPoint);
@@ -113,8 +158,8 @@ namespace HFT_DrawingHelper {
                     insertionPoint,
                     DepthUp,
                     DepthDown,
-                    viewAttrs,
-                    markAttrs,
+                    viewAttributes,
+                    markAttributes,
                     out var sectionView,
                     out var sectionMark
                 );
@@ -191,12 +236,17 @@ namespace HFT_DrawingHelper {
                 .ToDictionary(pair => pair.Key, pair => pair.Value);
 
             if (filtered.Count == 0) {
-                MessageBox.Show("Nie znaleziono krawędzi o podanych numerach.");
+                MessageBox.Show("Nie znaleziono numerowanych krawędzi o podanych numerach.");
                 return null;
             }
 
-            var missing = requested.Where(number => !edges.ContainsKey(number)).OrderBy(number => number).ToList();
-            if (missing.Count > 0) MessageBox.Show("Brak krawędzi o numerach: " + string.Join(", ", missing));
+            var missing = requested
+                .Where(number => !edges.ContainsKey(number))
+                .OrderBy(number => number)
+                .ToList();
+
+            if (missing.Count > 0)
+                MessageBox.Show("Brak numerowanych krawędzi o numerach: " + string.Join(", ", missing));
 
             return filtered;
         }

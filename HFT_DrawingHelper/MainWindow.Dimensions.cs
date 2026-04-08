@@ -44,21 +44,38 @@ namespace HFT_DrawingHelper {
                 return null;
             }
 
-            var elementEndpoints = DrawPartEdgeOutlines(selectedViewFromParts, selectedParts);
+            var outlineSnapshots = GetPartOutlineSnapshots(selectedViewFromParts, selectedParts);
+            if (outlineSnapshots == null || outlineSnapshots.Count == 0) return null;
+
+            if (DrawOutlinesDuringDimensioning)
+                DrawOutlineSnapshots(selectedViewFromParts, outlineSnapshots);
 
             var allViewBoundsFromParts = GetPartBoundsFromView(selectedViewFromParts);
             var allPartsBoundsFromParts = GetAssemblyBounds(allViewBoundsFromParts);
 
             if (allPartsBoundsFromParts == null) return null;
 
-            var selectedBoundsList = GetPartBoundsFromDrawingParts(selectedViewFromParts, selectedParts);
-            var selectedBounds = GetAssemblyBounds(selectedBoundsList);
+            var selectedBoundsList = outlineSnapshots
+                .Where(snapshot => snapshot?.Bounds != null)
+                .Select(snapshot => snapshot.Bounds)
+                .ToList();
 
+            var selectedBounds = GetAssemblyBounds(selectedBoundsList);
             if (selectedBounds == null) return null;
 
+            var elementEndpoints = outlineSnapshots
+                .Where(snapshot => snapshot?.Vertices != null && snapshot.Vertices.Count > 0)
+                .Select(snapshot => new ElementEndpointsSnapshot {
+                    Bounds = snapshot.Bounds,
+                    Endpoints = snapshot.Vertices
+                        .Select(point => new TSG.Point(point.X, point.Y, 0))
+                        .ToList()
+                })
+                .ToList();
+
             var mergedEndpoints = elementEndpoints
-                .Where(x => x?.Endpoints != null)
-                .SelectMany(x => x.Endpoints)
+                .Where(element => element?.Endpoints != null)
+                .SelectMany(element => element.Endpoints)
                 .ToList();
 
             return new DimensionGeometrySnapshot {
@@ -100,7 +117,7 @@ namespace HFT_DrawingHelper {
                 if (activeDrawing == null)
                     return;
 
-                if (validOptions.Where(o => o.DimensionType == DimensionType.Curved)
+                if (validOptions.Where(option => option.DimensionType == DimensionType.Curved)
                     .Any(option => !PickCurvedArcPoints(drawingHandler, option)))
                     return;
 
@@ -163,14 +180,14 @@ namespace HFT_DrawingHelper {
         #region Bounds Calculation
 
         private static PartBounds GetAssemblyBounds(List<PartBounds> parts) {
-            var valid = parts?.Where(p => p != null).ToList();
+            var valid = parts?.Where(part => part != null).ToList();
             if (valid == null || valid.Count == 0) return null;
 
             return new PartBounds {
-                MinX = valid.Min(p => p.MinX),
-                MaxX = valid.Max(p => p.MaxX),
-                MinY = valid.Min(p => p.MinY),
-                MaxY = valid.Max(p => p.MaxY)
+                MinX = valid.Min(part => part.MinX),
+                MaxX = valid.Max(part => part.MaxX),
+                MinY = valid.Min(part => part.MinY),
+                MaxY = valid.Max(part => part.MaxY)
             };
         }
 
@@ -197,8 +214,8 @@ namespace HFT_DrawingHelper {
 
         private static List<double> MergeAndSort(IEnumerable<double> rawValues, double tolerance) {
             var sorted = rawValues
-                .Where(v => !double.IsNaN(v) && !double.IsInfinity(v))
-                .OrderBy(v => v)
+                .Where(value => !double.IsNaN(value) && !double.IsInfinity(value))
+                .OrderBy(value => value)
                 .ToList();
 
             if (sorted.Count == 0) return new List<double>();
@@ -207,124 +224,16 @@ namespace HFT_DrawingHelper {
             var bucketStart = sorted[0];
             var bucket = new List<double> { sorted[0] };
 
-            for (var i = 1; i < sorted.Count; i++)
-                if (sorted[i] - bucketStart <= tolerance)
-                    bucket.Add(sorted[i]);
+            for (var index = 1; index < sorted.Count; index++)
+                if (sorted[index] - bucketStart <= tolerance)
+                    bucket.Add(sorted[index]);
                 else {
                     result.Add(bucket.Average());
-                    bucketStart = sorted[i];
-                    bucket = new List<double> { sorted[i] };
+                    bucketStart = sorted[index];
+                    bucket = new List<double> { sorted[index] };
                 }
 
             result.Add(bucket.Average());
-            return result;
-        }
-
-        private static List<TSG.Point> EnsureClosedOutline(List<TSG.Point> outline) {
-            if (outline == null || outline.Count < 2) return outline;
-
-            var first = outline[0];
-            var last = outline[outline.Count - 1];
-
-            var distance = Math.Sqrt(
-                (first.X - last.X) * (first.X - last.X) +
-                (first.Y - last.Y) * (first.Y - last.Y)
-            );
-
-            if (distance > DuplicateToleranceMillimeters)
-                outline.Add(new TSG.Point(first.X, first.Y, 0));
-
-            return outline;
-        }
-
-        private static List<TSG.Point> GetOpenOutlineVertices(List<TSG.Point> outline) {
-            if (outline == null) return null;
-
-            var result = RemoveNearDuplicates(new List<TSG.Point>(outline), DuplicateToleranceMillimeters);
-            if (result == null || result.Count == 0) return result;
-
-            if (result.Count > 1) {
-                var first = result[0];
-                var last = result[result.Count - 1];
-
-                var distance = Math.Sqrt(
-                    (first.X - last.X) * (first.X - last.X) +
-                    (first.Y - last.Y) * (first.Y - last.Y)
-                );
-
-                if (distance <= DuplicateToleranceMillimeters)
-                    result.RemoveAt(result.Count - 1);
-            }
-
-            return result;
-        }
-
-        private static double GetCornerAngleDegrees(TSG.Point previous, TSG.Point current, TSG.Point next) {
-            var firstVectorX = current.X - previous.X;
-            var firstVectorY = current.Y - previous.Y;
-            var secondVectorX = next.X - current.X;
-            var secondVectorY = next.Y - current.Y;
-
-            var firstLength = Math.Sqrt(firstVectorX * firstVectorX + firstVectorY * firstVectorY);
-            var secondLength = Math.Sqrt(secondVectorX * secondVectorX + secondVectorY * secondVectorY);
-
-            if (firstLength < 1e-9 || secondLength < 1e-9) return 0.0;
-
-            var dot = (firstVectorX * secondVectorX + firstVectorY * secondVectorY) / (firstLength * secondLength);
-            if (dot > 1.0) dot = 1.0;
-            if (dot < -1.0) dot = -1.0;
-
-            return Math.Acos(dot) * 180.0 / Math.PI;
-        }
-
-        private static List<int> GetSignificantCornerIndices(List<TSG.Point> vertices) {
-            var result = new List<int>();
-            if (vertices == null || vertices.Count < 3) return result;
-
-            for (var i = 0; i < vertices.Count; i++) {
-                var previousIndex = i == 0 ? vertices.Count - 1 : i - 1;
-                var nextIndex = i == vertices.Count - 1 ? 0 : i + 1;
-
-                var angleDegrees = GetCornerAngleDegrees(
-                    vertices[previousIndex],
-                    vertices[i],
-                    vertices[nextIndex]
-                );
-
-                if (angleDegrees >= SignificantCornerAngleDegrees)
-                    result.Add(i);
-            }
-
-            return result;
-        }
-
-        private static List<TSG.Point> CollectPathBetweenCorners(
-            List<TSG.Point> vertices,
-            int startIndex,
-            int endIndex
-        ) {
-            var result = new List<TSG.Point>();
-            if (vertices == null || vertices.Count == 0) return result;
-
-            var index = startIndex;
-            result.Add(vertices[index]);
-
-            while (index != endIndex) {
-                index++;
-                if (index >= vertices.Count) index = 0;
-                result.Add(vertices[index]);
-            }
-
-            return result;
-        }
-
-        private static List<TSG.Point> PrepareSegmentPath(List<TSG.Point> points) {
-            if (points == null) return null;
-
-            var result = RemoveNearDuplicates(new List<TSG.Point>(points), DuplicateToleranceMillimeters);
-            result = SimplifyPolyline(result);
-            result = RemoveNearDuplicates(result, DuplicateToleranceMillimeters);
-
             return result;
         }
 
@@ -332,27 +241,27 @@ namespace HFT_DrawingHelper {
             var result = new List<TSG.Point>();
             if (view == null) return result;
 
-            var it = view.GetAllObjects(typeof(TSD.Line));
-            while (it?.MoveNext() == true)
-                if (it.Current is TSD.Line line) {
+            var iterator = view.GetAllObjects(typeof(TSD.Line));
+            while (iterator?.MoveNext() == true)
+                if (iterator.Current is TSD.Line line) {
                     result.Add(new TSG.Point(line.StartPoint.X, line.StartPoint.Y, 0));
                     result.Add(new TSG.Point(line.EndPoint.X, line.EndPoint.Y, 0));
                 }
 
-            it = view.GetAllObjects(typeof(TSD.Polyline));
-            while (it?.MoveNext() == true) {
-                if (!(it.Current is TSD.Polyline poly)) continue;
+            iterator = view.GetAllObjects(typeof(TSD.Polyline));
+            while (iterator?.MoveNext() == true) {
+                if (!(iterator.Current is TSD.Polyline polyline)) continue;
 
-                var pts = new List<TSG.Point>();
-                foreach (var item in poly.Points)
+                var points = new List<TSG.Point>();
+                foreach (var item in polyline.Points)
                     if (item is TSG.Point point)
-                        pts.Add(point);
+                        points.Add(point);
 
-                if (pts.Count == 0) continue;
+                if (points.Count == 0) continue;
 
-                result.Add(new TSG.Point(pts[0].X, pts[0].Y, 0));
-                if (pts.Count > 1)
-                    result.Add(new TSG.Point(pts[pts.Count - 1].X, pts[pts.Count - 1].Y, 0));
+                result.Add(new TSG.Point(points[0].X, points[0].Y, 0));
+                if (points.Count > 1)
+                    result.Add(new TSG.Point(points[points.Count - 1].X, points[points.Count - 1].Y, 0));
             }
 
             return result;
@@ -421,13 +330,20 @@ namespace HFT_DrawingHelper {
             return GetBoundsFromPoints(element?.Endpoints);
         }
 
-        private static void AddHorizontalPoints(TSD.PointList points, IEnumerable<double> xCoordinates,
-            double anchorY) {
+        private static void AddHorizontalPoints(
+            TSD.PointList points,
+            IEnumerable<double> xCoordinates,
+            double anchorY
+        ) {
             foreach (var x in xCoordinates)
                 points.Add(new TSG.Point(x, anchorY, 0));
         }
 
-        private static void AddVerticalPoints(TSD.PointList points, IEnumerable<double> yCoordinates, double anchorX) {
+        private static void AddVerticalPoints(
+            TSD.PointList points,
+            IEnumerable<double> yCoordinates,
+            double anchorX
+        ) {
             foreach (var y in yCoordinates)
                 points.Add(new TSG.Point(anchorX, y, 0));
         }
@@ -439,7 +355,7 @@ namespace HFT_DrawingHelper {
             var result = new List<TSG.Point>();
             if (points == null) return result;
 
-            foreach (var point in points.Where(p => p != null)) {
+            foreach (var point in points.Where(currentPoint => currentPoint != null)) {
                 var exists = result.Any(existing =>
                     Math.Abs(existing.X - point.X) <= tolerance &&
                     Math.Abs(existing.Y - point.Y) <= tolerance
@@ -634,6 +550,7 @@ namespace HFT_DrawingHelper {
 
         #region Constants
 
+        private const bool DrawOutlinesDuringDimensioning = true;
         private const double FarDimensionOffsetMillimeters = 20.0;
         private const double PerElementDimensionOffsetMillimeters = 100.0;
         private const double MinimumDimensionSpanMillimeters = 1.0;
@@ -848,12 +765,12 @@ namespace HFT_DrawingHelper {
                 };
 
                 picker.PickPoints(3, prompts, out var picked, out _);
-                var pts = picked?.OfType<TSG.Point>().ToList();
-                if (pts == null || pts.Count < 3) return false;
+                var points = picked?.OfType<TSG.Point>().ToList();
+                if (points == null || points.Count < 3) return false;
 
-                options.UserArcStart = new TSG.Point(pts[0].X, pts[0].Y, 0);
-                options.UserArcMid = new TSG.Point(pts[1].X, pts[1].Y, 0);
-                options.UserArcEnd = new TSG.Point(pts[2].X, pts[2].Y, 0);
+                options.UserArcStart = new TSG.Point(points[0].X, points[0].Y, 0);
+                options.UserArcMid = new TSG.Point(points[1].X, points[1].Y, 0);
+                options.UserArcEnd = new TSG.Point(points[2].X, points[2].Y, 0);
                 return true;
             }
             catch {
@@ -943,404 +860,25 @@ namespace HFT_DrawingHelper {
             if (firstView == null || secondView == null) return false;
 
             try {
-                var firstCs = firstView.DisplayCoordinateSystem;
-                var secondCs = secondView.DisplayCoordinateSystem;
+                var firstCoordinateSystem = firstView.DisplayCoordinateSystem;
+                var secondCoordinateSystem = secondView.DisplayCoordinateSystem;
 
-                if (firstCs == null || secondCs == null) return false;
+                if (firstCoordinateSystem == null || secondCoordinateSystem == null) return false;
 
                 return
-                    Math.Abs(firstCs.Origin.X - secondCs.Origin.X) < 0.001 &&
-                    Math.Abs(firstCs.Origin.Y - secondCs.Origin.Y) < 0.001 &&
-                    Math.Abs(firstCs.Origin.Z - secondCs.Origin.Z) < 0.001 &&
-                    Math.Abs(firstCs.AxisX.X - secondCs.AxisX.X) < 0.001 &&
-                    Math.Abs(firstCs.AxisX.Y - secondCs.AxisX.Y) < 0.001 &&
-                    Math.Abs(firstCs.AxisX.Z - secondCs.AxisX.Z) < 0.001 &&
-                    Math.Abs(firstCs.AxisY.X - secondCs.AxisY.X) < 0.001 &&
-                    Math.Abs(firstCs.AxisY.Y - secondCs.AxisY.Y) < 0.001 &&
-                    Math.Abs(firstCs.AxisY.Z - secondCs.AxisY.Z) < 0.001;
+                    Math.Abs(firstCoordinateSystem.Origin.X - secondCoordinateSystem.Origin.X) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.Origin.Y - secondCoordinateSystem.Origin.Y) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.Origin.Z - secondCoordinateSystem.Origin.Z) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisX.X - secondCoordinateSystem.AxisX.X) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisX.Y - secondCoordinateSystem.AxisX.Y) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisX.Z - secondCoordinateSystem.AxisX.Z) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisY.X - secondCoordinateSystem.AxisY.X) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisY.Y - secondCoordinateSystem.AxisY.Y) < 0.001 &&
+                    Math.Abs(firstCoordinateSystem.AxisY.Z - secondCoordinateSystem.AxisY.Z) < 0.001;
             }
             catch {
                 return false;
             }
-        }
-
-        #endregion
-
-        #region Per-Part Outline In View Space
-
-        private static PartBounds GetPartAabbInViewSpace(TSD.View view, TSM.Part modelPart) {
-            if (view == null || modelPart == null) return null;
-
-            var workPlaneHandler = MyModel.GetWorkPlaneHandler();
-            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
-
-            try {
-                workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(view.DisplayCoordinateSystem)
-                );
-
-                var solid = modelPart.GetSolid();
-                if (solid == null) return null;
-
-                var minPoint = solid.MinimumPoint;
-                var maxPoint = solid.MaximumPoint;
-
-                if (minPoint == null || maxPoint == null) return null;
-
-                var width = maxPoint.X - minPoint.X;
-                var height = maxPoint.Y - minPoint.Y;
-
-                if (width < MinimumPartSizeForDimensionMillimeters &&
-                    height < MinimumPartSizeForDimensionMillimeters)
-                    return null;
-
-                return new PartBounds {
-                    MinX = minPoint.X,
-                    MaxX = maxPoint.X,
-                    MinY = minPoint.Y,
-                    MaxY = maxPoint.Y
-                };
-            }
-            finally {
-                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
-            }
-        }
-
-        private static bool ShouldUseSweepOutline(TSM.Part modelPart) {
-            return modelPart is TSM.LoftedPlate || modelPart is TSM.ContourPlate;
-        }
-
-        private static List<TSG.Point> GetSweptPlateOutlinePoints(TSM.Solid solid) {
-            var points = new List<TSG.Point>();
-            if (solid == null) return points;
-
-            var minX = solid.MinimumPoint.X;
-            var maxX = solid.MaximumPoint.X;
-
-            if (maxX - minX < 1e-6) return points;
-
-            var xValues = new List<double> { minX };
-            for (var x = minX + SweepStepMillimeters; x < maxX; x += SweepStepMillimeters)
-                xValues.Add(x);
-            xValues.Add(maxX);
-
-            foreach (var xValue in xValues) {
-                var enumerator = solid.GetAllIntersectionPoints(
-                    new TSG.Point(xValue, 0, 0),
-                    new TSG.Point(xValue, 1, 0),
-                    new TSG.Point(xValue, 0, 1)
-                );
-
-                while (enumerator.MoveNext())
-                    if (enumerator.Current is TSG.Point p)
-                        points.Add(new TSG.Point(xValue, p.Y, 0));
-            }
-
-            points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
-            return points;
-        }
-
-        private static List<TSG.Point> SimplifyPolyline(
-            List<TSG.Point> points,
-            double toleranceMillimeters = 0.5
-        ) {
-            if (points == null || points.Count < 3) return points;
-
-            var current = new List<TSG.Point>(points);
-            var changed = true;
-
-            while (changed && current.Count >= 3) {
-                changed = false;
-                var next = new List<TSG.Point>();
-
-                var index = 0;
-                while (index < current.Count) {
-                    var remaining = current.Count - index;
-
-                    if (remaining >= 3) {
-                        var first = current[index];
-                        var middle = current[index + 1];
-                        var last = current[index + 2];
-
-                        var distance = GetDistanceToSegment(middle, first, last);
-
-                        if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], first))
-                            next.Add(first);
-
-                        if (distance <= toleranceMillimeters) {
-                            next.Add(last);
-                            changed = true;
-                        }
-                        else {
-                            next.Add(middle);
-                            next.Add(last);
-                        }
-
-                        index += 3;
-                    }
-                    else {
-                        for (var i = index; i < current.Count; i++)
-                            if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], current[i]))
-                                next.Add(current[i]);
-
-                        break;
-                    }
-                }
-
-                current = RemoveNearDuplicates(next, DuplicateToleranceMillimeters);
-            }
-
-            return current;
-        }
-
-        private static double GetDistanceToSegment(TSG.Point point, TSG.Point start, TSG.Point end) {
-            var segmentX = end.X - start.X;
-            var segmentY = end.Y - start.Y;
-            var segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
-
-            if (segmentLengthSquared < 1e-12) {
-                var distanceX = point.X - start.X;
-                var distanceY = point.Y - start.Y;
-                return Math.Sqrt(distanceX * distanceX + distanceY * distanceY);
-            }
-
-            var t = (
-                (point.X - start.X) * segmentX +
-                (point.Y - start.Y) * segmentY
-            ) / segmentLengthSquared;
-
-            if (t < 0.0) t = 0.0;
-            if (t > 1.0) t = 1.0;
-
-            var projectedX = start.X + t * segmentX;
-            var projectedY = start.Y + t * segmentY;
-
-            var dx = point.X - projectedX;
-            var dy = point.Y - projectedY;
-
-            return Math.Sqrt(dx * dx + dy * dy);
-        }
-
-        private static bool ArePointsEqual(TSG.Point first, TSG.Point second) {
-            if (first == null || second == null) return false;
-
-            return
-                Math.Abs(first.X - second.X) <= DuplicateToleranceMillimeters &&
-                Math.Abs(first.Y - second.Y) <= DuplicateToleranceMillimeters;
-        }
-
-        private static List<TSG.Point> BuildUpperLowerChainOutline(List<TSG.Point> points) {
-            if (points == null || points.Count < 2) return null;
-
-            var byX = points
-                .GroupBy(p => p.X)
-                .OrderBy(g => g.Key)
-                .ToList();
-
-            if (byX.Count < 2) return null;
-
-            var upper = byX.Select(g => new TSG.Point(g.Key, g.Max(p => p.Y), 0)).ToList();
-            var lower = byX.Select(g => new TSG.Point(g.Key, g.Min(p => p.Y), 0)).ToList();
-
-            var outline = new List<TSG.Point>();
-            outline.AddRange(upper);
-            outline.AddRange(Enumerable.Reverse(lower));
-
-            return outline;
-        }
-
-        #endregion
-
-        #region Part Edge Outline Drawing
-
-        private static List<ElementEndpointsSnapshot> DrawPartEdgeOutlines(
-            TSD.View view,
-            List<DrawingPartWithBounds> drawingParts
-        ) {
-            var result = new List<ElementEndpointsSnapshot>();
-            if (view == null || drawingParts == null) return result;
-
-            var workPlaneHandler = MyModel.GetWorkPlaneHandler();
-            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
-
-            try {
-                workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(view.DisplayCoordinateSystem)
-                );
-
-                foreach (var dp in drawingParts.Where(p => p?.DrawingPart != null)) {
-                    if (!(MyModel.SelectModelObject(dp.DrawingPart.ModelIdentifier) is TSM.Part modelPart)) continue;
-
-                    modelPart.Select();
-
-                    var solid = modelPart.GetSolid();
-                    if (solid == null) continue;
-
-                    var bounds = GetPartAabbInViewSpace(view, modelPart);
-                    if (bounds == null) continue;
-
-                    List<TSG.Point> outline;
-
-                    if (ShouldUseSweepOutline(modelPart)) {
-                        var points = GetSweptPlateOutlinePoints(solid);
-                        if (points.Count < 2) continue;
-
-                        outline = BuildUpperLowerChainOutline(points);
-                        if (outline == null || outline.Count < 3) continue;
-
-                        outline = PrepareSegmentPath(outline);
-                        outline = EnsureClosedOutline(outline);
-
-                        if (outline == null || outline.Count < 4) continue;
-                    }
-                    else {
-                        var backZ = solid.MinimumPoint.Z;
-                        const double inward = 1.0;
-
-                        if (solid.MaximumPoint.Z - solid.MinimumPoint.Z > inward * 2)
-                            backZ += inward;
-                        else
-                            backZ = (solid.MinimumPoint.Z + solid.MaximumPoint.Z) * 0.5;
-
-                        var backPoints = GetIntersectionPointsAtLocalZ(solid, backZ);
-                        if (backPoints == null || backPoints.Count < 3) continue;
-
-                        backPoints = RemoveNearDuplicates(backPoints, DuplicateToleranceMillimeters);
-                        outline = BuildConvexHull2D(backPoints);
-
-                        if (outline == null || outline.Count < 3) continue;
-
-                        outline = PrepareSegmentPath(outline);
-                        outline = EnsureClosedOutline(outline);
-
-                        if (outline == null || outline.Count < 4) continue;
-                    }
-
-                    DrawOutlineByAngleType(view, outline);
-
-                    var realVertices = GetOpenOutlineVertices(outline);
-                    if (realVertices == null || realVertices.Count == 0) continue;
-
-                    result.Add(new ElementEndpointsSnapshot {
-                        Bounds = bounds,
-                        Endpoints = realVertices.Select(p => new TSG.Point(p.X, p.Y, 0)).ToList()
-                    });
-                }
-            }
-            finally {
-                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
-            }
-
-            return result;
-        }
-
-        private static void DrawOutlineByAngleType(
-            TSD.View view,
-            List<TSG.Point> outline
-        ) {
-            if (view == null || outline == null || outline.Count < 2) return;
-
-            var vertices = GetOpenOutlineVertices(outline);
-            if (vertices == null || vertices.Count < 2) return;
-
-            if (vertices.Count == 2) {
-                DrawStraightSegmentPrimitive(view, vertices[0], vertices[1], TSD.DrawingColors.Green);
-                return;
-            }
-
-            var significantCornerIndices = GetSignificantCornerIndices(vertices);
-
-            switch (significantCornerIndices.Count) {
-                case 0:
-                case 1:
-                    DrawPolylinePrimitive(view, vertices, TSD.DrawingColors.Green);
-                    return;
-            }
-
-            for (var i = 0; i < significantCornerIndices.Count; i++) {
-                var startIndex = significantCornerIndices[i];
-                var endIndex = significantCornerIndices[(i + 1) % significantCornerIndices.Count];
-
-                var path = CollectPathBetweenCorners(vertices, startIndex, endIndex);
-                path = PrepareSegmentPath(path);
-
-                if (path == null || path.Count < 2) continue;
-
-                if (path.Count == 2)
-                    DrawStraightSegmentPrimitive(view, path[0], path[1], TSD.DrawingColors.Red);
-                else
-                    DrawPolylinePrimitive(view, path, TSD.DrawingColors.Green);
-            }
-        }
-
-        private static void DrawStraightSegmentPrimitive(
-            TSD.View view,
-            TSG.Point startPoint,
-            TSG.Point endPoint,
-            TSD.DrawingColors color
-        ) {
-            if (view == null || startPoint == null || endPoint == null) return;
-
-            var distance = Math.Sqrt(
-                (startPoint.X - endPoint.X) * (startPoint.X - endPoint.X) +
-                (startPoint.Y - endPoint.Y) * (startPoint.Y - endPoint.Y)
-            );
-
-            if (distance <= DuplicateToleranceMillimeters) return;
-
-            var points = new TSD.PointList {
-                new TSG.Point(startPoint.X, startPoint.Y, 0),
-                new TSG.Point(endPoint.X, endPoint.Y, 0)
-            };
-
-            var polyline = new TSD.Polyline(view, points);
-            polyline.Attributes.Line.Color = color;
-            polyline.Insert();
-        }
-
-        private static void DrawPolylinePrimitive(
-            TSD.View view,
-            List<TSG.Point> points,
-            TSD.DrawingColors color
-        ) {
-            if (view == null || points == null || points.Count < 2) return;
-
-            var cleanedPoints = RemoveNearDuplicates(
-                new List<TSG.Point>(points),
-                DuplicateToleranceMillimeters
-            );
-
-            if (cleanedPoints == null || cleanedPoints.Count < 2) return;
-
-            switch (cleanedPoints.Count) {
-                case 2:
-                    DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
-                    return;
-                case 3: {
-                    var first = cleanedPoints[0];
-                    var last = cleanedPoints[cleanedPoints.Count - 1];
-
-                    var distance = Math.Sqrt(
-                        (first.X - last.X) * (first.X - last.X) +
-                        (first.Y - last.Y) * (first.Y - last.Y)
-                    );
-
-                    if (distance <= DuplicateToleranceMillimeters) {
-                        DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
-                        return;
-                    }
-
-                    break;
-                }
-            }
-
-            var polylinePoints = new TSD.PointList();
-            foreach (var point in cleanedPoints)
-                polylinePoints.Add(new TSG.Point(point.X, point.Y, 0));
-
-            var polyline = new TSD.Polyline(view, polylinePoints);
-            polyline.Attributes.Line.Color = color;
-            polyline.Insert();
         }
 
         #endregion
@@ -1382,8 +920,9 @@ namespace HFT_DrawingHelper {
             var result = new List<PartBounds>();
             if (view == null || drawingParts == null) return result;
 
-            foreach (var dp in drawingParts.Where(dp => dp?.DrawingPart != null)) {
-                if (!(MyModel.SelectModelObject(dp.DrawingPart.ModelIdentifier) is TSM.Part modelPart)) continue;
+            foreach (var drawingPart in drawingParts.Where(item => item?.DrawingPart != null)) {
+                if (!(MyModel.SelectModelObject(drawingPart.DrawingPart.ModelIdentifier) is TSM.Part modelPart))
+                    continue;
 
                 modelPart.Select();
 

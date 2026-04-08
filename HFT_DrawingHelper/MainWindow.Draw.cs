@@ -10,16 +10,6 @@ namespace HFT_DrawingHelper {
     public partial class MainWindow {
         #region View And Model Helpers
 
-        private static TPart FindFirstPart<TPart>(List<TSM.Part> parts) where TPart : TSM.Part {
-            if (parts == null || parts.Count == 0) return null;
-
-            foreach (var part in parts)
-                if (part is TPart typedPart)
-                    return typedPart;
-
-            return null;
-        }
-
         private static bool HasExactlyOnePart(TSD.View selectedView) {
             var modelParts = GetModelPartsFromDrawingView(selectedView);
             return modelParts != null && modelParts.Count == 1;
@@ -27,25 +17,7 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
-        #region Constants
-
-        private const double ZStepMillimeters = 0.5;
-        private const int MaximumEmptyStepsPerDirection = 80;
-        private const double DuplicateToleranceMillimeters = 0.5;
-        private const double MinimumLengthMillimeters = 100.0;
-        private const double MinimumContourPlateLengthMillimeters = 100.0;
-        private const double NearStraightAngleDegrees = 170.0;
-        private const double JoinToleranceMillimeters = 0.5;
-        private const double NumberOffsetMillimeters = 20.0;
-
-        private const int TargetBinCount = 60;
-        private const int SmoothingWindowRadius = 2;
-        private const int EdgeLockBinCount = 3;
-        private const int MaximumInlineEdgeCount = 10;
-
-        #endregion
-
-        #region Main Edge Detection Flow
+        #region Main Edge Drawing Flow
 
         private static string DrawEdgesWithNumbers() {
             var drawingHandler = new TSD.DrawingHandler();
@@ -54,28 +26,70 @@ namespace HFT_DrawingHelper {
             var drawing = drawingHandler.GetActiveDrawing();
             if (drawing == null) return null;
 
-            var selectedView = GetSelectedViewOrShowMessage(drawingHandler);
-            if (selectedView == null) return null;
+            var pickedView = GetSelectedViewOrShowMessage(drawingHandler);
+            if (pickedView == null) return null;
 
-            if (!HasExactlyOnePart(selectedView)) {
-                MessageBox.Show("Widok musi zawierać dokładnie jeden element typu Part.");
+            var drawingParts = GetSelectedDrawingParts(drawingHandler);
+            TSD.View commonView;
+
+            if (drawingParts.Count == 0) {
+                var singleDrawingPart = GetSingleDrawingPartFromPickedView(pickedView);
+                if (singleDrawingPart == null) {
+                    MessageBox.Show(
+                        "Jeśli nie zaznaczasz elementu, wskazany widok musi zawierać dokładnie jeden element typu Part.");
+                    return null;
+                }
+
+                drawingParts = new List<DrawingPartWithBounds> {
+                    singleDrawingPart
+                };
+
+                commonView = singleDrawingPart.DrawingPart.GetView() as TSD.View;
+                if (commonView == null) {
+                    MessageBox.Show("Nie udało się ustalić widoku elementu.");
+                    return null;
+                }
+            }
+            else {
+                commonView = GetCommonViewFromSelectedParts(drawingParts);
+                if (commonView == null) {
+                    MessageBox.Show("Zaznaczone elementy muszą należeć do jednego widoku.");
+                    return null;
+                }
+            }
+
+            var outlineSnapshots = GetPartOutlineSnapshots(commonView, drawingParts);
+            if (outlineSnapshots == null || outlineSnapshots.Count == 0) {
+                MessageBox.Show("Nie udało się wyznaczyć krawędzi dla zaznaczonych elementów.");
                 return null;
             }
 
-            var detectionResult = DetectEdgesFromSelectedView(selectedView);
+            DrawOutlineSnapshots(commonView, outlineSnapshots);
 
-            if (!detectionResult.HasEdges) {
-                MessageBox.Show(detectionResult.ErrorMessage);
-                return null;
+            if (!HasExactlyOnePart(commonView)) {
+                drawing.CommitChanges();
+                return string.Empty;
+            }
+
+            var edgesByNumber = BuildEdgesByNumberFromOutlines(outlineSnapshots);
+            if (edgesByNumber.Count == 0) {
+                drawing.CommitChanges();
+                return string.Empty;
             }
 
             var numberedGroups = BuildNumberedEdgeGroups(
-                detectionResult.EdgesByNumber,
+                edgesByNumber,
                 JoinToleranceMillimeters,
                 NearStraightAngleDegrees
             );
 
-            DrawEdges(selectedView, detectionResult.EdgesByNumber);
+            numberedGroups = FilterShortNumberedEdgeGroups(
+                numberedGroups,
+                MinimumNumberedEdgeLengthMillimeters
+            );
+
+            DrawEdgeNumbers(commonView, numberedGroups);
+
             drawing.CommitChanges();
 
             return FormatEdgeNumbersForTextBox(
@@ -83,309 +97,309 @@ namespace HFT_DrawingHelper {
             );
         }
 
-        private static EdgeDetectionResult DetectEdgesFromSelectedView(TSD.View selectedView) {
-            if (selectedView == null)
-                return new EdgeDetectionResult {
-                    ErrorMessage = "Nie zaznaczono widoku."
-                };
+        private static void DrawOutlineSnapshots(
+            TSD.View view,
+            List<PartOutlineSnapshot> outlineSnapshots
+        ) {
+            if (view == null || outlineSnapshots == null || outlineSnapshots.Count == 0) return;
 
-            var modelParts = GetModelPartsFromDrawingView(selectedView);
-            if (modelParts == null || modelParts.Count == 0)
-                return new EdgeDetectionResult {
-                    ErrorMessage = "Nie znaleziono żadnych elementów typu Part na tym widoku."
-                };
-
-            var contourEdges = GetContourPlateEdges(selectedView, modelParts);
-            if (contourEdges.Count > 0)
-                return new EdgeDetectionResult {
-                    SourceName = "ContourPlate",
-                    EdgesByNumber = contourEdges
-                };
-
-            var loftedEdges = GetLoftedPlateEdges(selectedView, modelParts);
-            if (loftedEdges.Count > 0)
-                return new EdgeDetectionResult {
-                    SourceName = "LoftedPlate",
-                    EdgesByNumber = loftedEdges
-                };
-
-            var beamEdges = GetBeamEdges(selectedView, modelParts);
-            if (beamEdges.Count > 0)
-                return new EdgeDetectionResult {
-                    SourceName = "Beam",
-                    EdgesByNumber = beamEdges
-                };
-
-            var polyBeamEdges = GetPolyBeamEdges(selectedView, modelParts);
-            if (polyBeamEdges.Count > 0)
-                return new EdgeDetectionResult {
-                    SourceName = "PolyBeam",
-                    EdgesByNumber = polyBeamEdges
-                };
-
-            var foundTypes = string.Join(
-                ", ",
-                modelParts
-                    .Select(part => part.GetType().Name)
-                    .Distinct()
-                    .OrderBy(typeName => typeName)
-            );
-
-            return new EdgeDetectionResult {
-                ErrorMessage =
-                    "Nie udało się wyznaczyć krawędzi dla żadnego obsługiwanego typu elementu.\n" +
-                    "Znalezione typy na widoku: " + foundTypes
-            };
+            foreach (var group in outlineSnapshots
+                         .Where(snapshot => snapshot?.SegmentGroups != null && snapshot.SegmentGroups.Count != 0)
+                         .SelectMany(snapshot =>
+                             snapshot.SegmentGroups.Where(currentGroup =>
+                                 currentGroup?.Points != null && currentGroup.Points.Count >= 2)))
+                if (!group.IsPolyline || group.Points.Count == 2)
+                    DrawStraightSegmentPrimitive(view, group.Points[0], group.Points[1], TSD.DrawingColors.Red);
+                else
+                    DrawPolylinePrimitive(view, group.Points, TSD.DrawingColors.Red);
         }
 
         #endregion
 
-        #region Edge Detection By Part Type
+        #region Constants
 
-        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetContourPlateEdges(
-            TSD.View selectedView,
-            List<TSM.Part> modelParts
+        private const double DuplicateToleranceMillimeters = 0.5;
+        private const double NearStraightAngleDegrees = 170.0;
+        private const double JoinToleranceMillimeters = 0.5;
+        private const double NumberOffsetMillimeters = 20.0;
+        private const double MinimumNumberedEdgeLengthMillimeters = 100.0;
+        private const int MaximumInlineEdgeCount = 10;
+
+        #endregion
+
+        #region Shared Outline Data
+
+        private sealed class OutlineSegmentGroup {
+            public bool IsPolyline { get; set; }
+            public List<TSG.Point> Points { get; } = new List<TSG.Point>();
+        }
+
+        private sealed class PartOutlineSnapshot {
+            public PartBounds Bounds { get; set; }
+            public List<TSG.Point> Vertices { get; set; }
+            public List<OutlineSegmentGroup> SegmentGroups { get; } = new List<OutlineSegmentGroup>();
+        }
+
+        #endregion
+
+        #region Shared Outline Extraction
+
+        private static List<PartOutlineSnapshot> GetPartOutlineSnapshots(
+            TSD.View view,
+            List<DrawingPartWithBounds> drawingParts
         ) {
-            var edgesByNumber = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
-            if (selectedView == null || modelParts == null || modelParts.Count == 0) return edgesByNumber;
-
-            var workPlaneHandler = MyModel.GetWorkPlaneHandler();
-            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
-
-            try {
-                var contourPlate = FindFirstPart<TSM.ContourPlate>(modelParts);
-                if (contourPlate == null) return edgesByNumber;
-
-                workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(contourPlate.GetCoordinateSystem())
-                );
-
-                var edgesInPlatePlane = GetContourPlateEdgesInPlane(contourPlate);
-                if (edgesInPlatePlane == null || edgesInPlatePlane.Count == 0) return edgesByNumber;
-
-                workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem)
-                );
-
-                var edgesInViewPlane = TransformEdgesBetweenCoordinateSystems(
-                    contourPlate.GetCoordinateSystem(),
-                    selectedView.DisplayCoordinateSystem,
-                    edgesInPlatePlane
-                );
-
-                var rotatedEdges = RotateEdgesAroundCenter2D(edgesInViewPlane, 90.0);
-                var shiftedEdges = TranslateEdgesDownByHalfHeight(rotatedEdges);
-
-                var number = 0;
-
-                for (var index = 0; index < shiftedEdges.Count; index++) {
-                    var startPoint = shiftedEdges[index].A;
-                    var endPoint = shiftedEdges[index].B;
-
-                    var dx = endPoint.X - startPoint.X;
-                    var dy = endPoint.Y - startPoint.Y;
-                    var dz = endPoint.Z - startPoint.Z;
-
-                    var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
-                    if (length <= MinimumContourPlateLengthMillimeters) continue;
-
-                    number++;
-                    edgesByNumber[number] = Tuple.Create(
-                        new TSG.Point(startPoint.X, startPoint.Y, 0),
-                        new TSG.Point(endPoint.X, endPoint.Y, 0)
-                    );
-                }
-
-                return edgesByNumber;
-            }
-            finally {
-                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
-            }
-        }
-
-        private static List<(TSG.Point A, TSG.Point B)> GetContourPlateEdgesInPlane(TSM.ContourPlate contourPlate) {
-            var edges = new List<(TSG.Point A, TSG.Point B)>();
-            if (contourPlate == null) return edges;
-
-            var solid = contourPlate.GetSolid();
-            if (solid == null) return edges;
-
-            var points = new List<TSG.Point>();
-
-            var enumerator = solid.GetAllIntersectionPoints(
-                new TSG.Point(0, 0, 0),
-                new TSG.Point(1, 0, 0),
-                new TSG.Point(0, 1, 0)
-            );
-
-            while (enumerator.MoveNext()) {
-                if (!(enumerator.Current is TSG.Point point)) continue;
-                points.Add(new TSG.Point(point.X, point.Y, 0));
-            }
-
-            points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
-            points = SortByAngle(points);
-
-            if (points.Count < 3) return edges;
-
-            for (var index = 0; index < points.Count; index++) {
-                var startPoint = points[index];
-                var endPoint = points[(index + 1) % points.Count];
-                edges.Add((startPoint, endPoint));
-            }
-
-            return edges;
-        }
-
-        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetLoftedPlateEdges(
-            TSD.View selectedView,
-            List<TSM.Part> modelParts
-        ) {
-            return GetSolidBasedPartEdges<TSM.LoftedPlate>(
-                selectedView,
-                modelParts,
-                BuildLoftedPlateEnvelopeEdgesInView
-            );
-        }
-
-        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetBeamEdges(
-            TSD.View selectedView,
-            List<TSM.Part> modelParts
-        ) {
-            return GetSolidBasedPartEdges<TSM.Beam>(
-                selectedView,
-                modelParts,
-                BuildBeamEnvelopeEdgesInView
-            );
-        }
-
-        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetPolyBeamEdges(
-            TSD.View selectedView,
-            List<TSM.Part> modelParts
-        ) {
-            return GetSolidBasedPartEdges<TSM.PolyBeam>(
-                selectedView,
-                modelParts,
-                BuildBeamEnvelopeEdgesInView
-            );
-        }
-
-        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> GetSolidBasedPartEdges<TPart>(
-            TSD.View selectedView,
-            List<TSM.Part> modelParts,
-            Func<List<TSG.Point>, List<(TSG.Point A, TSG.Point B)>> buildEnvelopeEdges
-        ) where TPart : TSM.Part {
-            var edgesByNumber = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
-            if (selectedView == null || modelParts == null || modelParts.Count == 0) return edgesByNumber;
-
-            var part = FindFirstPart<TPart>(modelParts);
-            if (part == null) return edgesByNumber;
+            var result = new List<PartOutlineSnapshot>();
+            if (view == null || drawingParts == null) return result;
 
             var workPlaneHandler = MyModel.GetWorkPlaneHandler();
             var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
 
             try {
                 workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(part.GetCoordinateSystem())
+                    new TSM.TransformationPlane(view.DisplayCoordinateSystem)
                 );
 
-                var solid = part.GetSolid();
-                if (solid == null) return edgesByNumber;
+                foreach (var dp in drawingParts.Where(part => part?.DrawingPart != null)) {
+                    if (!(MyModel.SelectModelObject(dp.DrawingPart.ModelIdentifier) is TSM.Part modelPart)) continue;
 
-                var sampledPointsInPartPlane = GetSamplePointsByAdaptiveZSweep(solid);
-                if (sampledPointsInPartPlane.Count == 0) return edgesByNumber;
+                    modelPart.Select();
 
-                workPlaneHandler.SetCurrentTransformationPlane(
-                    new TSM.TransformationPlane(selectedView.DisplayCoordinateSystem)
-                );
+                    var solid = modelPart.GetSolid();
+                    if (solid == null) continue;
 
-                var sampledPointsInViewPlane = TransformPointsBetweenCoordinateSystems(
-                    part.GetCoordinateSystem(),
-                    selectedView.DisplayCoordinateSystem,
-                    sampledPointsInPartPlane
-                );
+                    var bounds = GetPartAabbInViewSpace(view, modelPart);
+                    if (bounds == null) continue;
 
-                if (sampledPointsInViewPlane.Count == 0) return edgesByNumber;
+                    List<TSG.Point> outline;
 
-                var edgesInViewPlane = buildEnvelopeEdges(sampledPointsInViewPlane);
-                if (edgesInViewPlane == null || edgesInViewPlane.Count == 0) return edgesByNumber;
+                    if (ShouldUseSweepOutline(modelPart)) {
+                        var points = GetSweptPlateOutlinePoints(solid);
+                        if (points.Count < 2) continue;
 
-                var number = 0;
+                        outline = BuildUpperLowerChainOutline(points);
+                        if (outline == null || outline.Count < 3) continue;
 
-                for (var index = 0; index < edgesInViewPlane.Count; index++) {
-                    var startPoint = edgesInViewPlane[index].A;
-                    var endPoint = edgesInViewPlane[index].B;
+                        outline = PrepareSegmentPath(outline);
+                        outline = EnsureClosedOutline(outline);
 
-                    var dx = endPoint.X - startPoint.X;
-                    var dy = endPoint.Y - startPoint.Y;
-                    var dz = endPoint.Z - startPoint.Z;
+                        if (outline == null || outline.Count < 4) continue;
+                    }
+                    else {
+                        var backZ = solid.MinimumPoint.Z;
+                        const double inward = 1.0;
 
-                    var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
-                    if (length <= MinimumLengthMillimeters) continue;
+                        if (solid.MaximumPoint.Z - solid.MinimumPoint.Z > inward * 2)
+                            backZ += inward;
+                        else
+                            backZ = (solid.MinimumPoint.Z + solid.MaximumPoint.Z) * 0.5;
 
-                    number++;
-                    edgesByNumber[number] = Tuple.Create(
-                        new TSG.Point(startPoint.X, startPoint.Y, 0),
-                        new TSG.Point(endPoint.X, endPoint.Y, 0)
-                    );
+                        var backPoints = GetIntersectionPointsAtLocalZ(solid, backZ);
+                        if (backPoints == null || backPoints.Count < 3) continue;
+
+                        backPoints = RemoveNearDuplicates(backPoints, DuplicateToleranceMillimeters);
+                        outline = BuildConvexHull2D(backPoints);
+
+                        if (outline == null || outline.Count < 3) continue;
+
+                        outline = PrepareSegmentPath(outline);
+                        outline = EnsureClosedOutline(outline);
+
+                        if (outline == null || outline.Count < 4) continue;
+                    }
+
+                    var vertices = GetOpenOutlineVertices(outline);
+                    if (vertices == null || vertices.Count < 2) continue;
+
+                    var snapshot = new PartOutlineSnapshot {
+                        Bounds = bounds,
+                        Vertices = vertices.Select(point => new TSG.Point(point.X, point.Y, 0)).ToList()
+                    };
+
+                    var segmentGroups = BuildOutlineSegmentGroups(vertices);
+                    foreach (var group in segmentGroups)
+                        snapshot.SegmentGroups.Add(group);
+
+                    result.Add(snapshot);
                 }
+            }
+            finally {
+                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
+            }
 
-                return edgesByNumber;
+            return result;
+        }
+
+        private static List<OutlineSegmentGroup> BuildOutlineSegmentGroups(List<TSG.Point> vertices) {
+            var result = new List<OutlineSegmentGroup>();
+            if (vertices == null || vertices.Count < 2) return result;
+
+            if (vertices.Count == 2) {
+                var singleGroup = new OutlineSegmentGroup {
+                    IsPolyline = false
+                };
+
+                singleGroup.Points.Add(new TSG.Point(vertices[0].X, vertices[0].Y, 0));
+                singleGroup.Points.Add(new TSG.Point(vertices[1].X, vertices[1].Y, 0));
+                result.Add(singleGroup);
+
+                return result;
+            }
+
+            var significantCornerIndices = GetSignificantCornerIndices(vertices);
+
+            if (significantCornerIndices.Count <= 1) {
+                var polylineGroup = new OutlineSegmentGroup {
+                    IsPolyline = true
+                };
+
+                foreach (var point in vertices)
+                    polylineGroup.Points.Add(new TSG.Point(point.X, point.Y, 0));
+
+                result.Add(polylineGroup);
+                return result;
+            }
+
+            for (var index = 0; index < significantCornerIndices.Count; index++) {
+                var startIndex = significantCornerIndices[index];
+                var endIndex = significantCornerIndices[(index + 1) % significantCornerIndices.Count];
+
+                var path = CollectPathBetweenCorners(vertices, startIndex, endIndex);
+                path = PrepareSegmentPath(path);
+
+                if (path == null || path.Count < 2) continue;
+
+                var group = new OutlineSegmentGroup {
+                    IsPolyline = path.Count > 2
+                };
+
+                foreach (var point in path)
+                    group.Points.Add(new TSG.Point(point.X, point.Y, 0));
+
+                result.Add(group);
+            }
+
+            return result;
+        }
+
+        #endregion
+
+        #region Shared Part Geometry Helpers
+
+        private static DrawingPartWithBounds GetSingleDrawingPartFromPickedView(TSD.View pickedView) {
+            if (pickedView == null) return null;
+
+            var iterator = pickedView.GetAllObjects(typeof(TSD.ModelObject));
+            if (iterator == null) return null;
+
+            DrawingPartWithBounds found = null;
+            var foundModelIds = new HashSet<int>();
+
+            while (iterator.MoveNext()) {
+                if (!(iterator.Current is TSD.Part drawingPart)) continue;
+                if (drawingPart.Hideable != null && drawingPart.Hideable.IsHidden) continue;
+
+                if (!(MyModel.SelectModelObject(drawingPart.ModelIdentifier) is TSM.Part modelPart)) continue;
+
+                if (!foundModelIds.Add(modelPart.Identifier.ID)) continue;
+
+                if (found != null)
+                    return null;
+
+                found = new DrawingPartWithBounds {
+                    DrawingPart = drawingPart
+                };
+            }
+
+            return found;
+        }
+
+        private static List<DrawingPartWithBounds> GetDrawingPartsFromView(TSD.View view) {
+            var result = new List<DrawingPartWithBounds>();
+            if (view == null) return result;
+
+            var iterator = view.GetAllObjects(typeof(TSD.ModelObject));
+            if (iterator == null) return result;
+
+            while (iterator.MoveNext()) {
+                if (!(iterator.Current is TSD.Part drawingPart)) continue;
+                if (drawingPart.Hideable != null && drawingPart.Hideable.IsHidden) continue;
+
+                result.Add(new DrawingPartWithBounds { DrawingPart = drawingPart });
+            }
+
+            return result;
+        }
+
+        private static PartBounds GetPartAabbInViewSpace(TSD.View view, TSM.Part modelPart) {
+            if (view == null || modelPart == null) return null;
+
+            var workPlaneHandler = MyModel.GetWorkPlaneHandler();
+            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
+
+            try {
+                workPlaneHandler.SetCurrentTransformationPlane(
+                    new TSM.TransformationPlane(view.DisplayCoordinateSystem)
+                );
+
+                var solid = modelPart.GetSolid();
+                if (solid == null) return null;
+
+                var minPoint = solid.MinimumPoint;
+                var maxPoint = solid.MaximumPoint;
+
+                if (minPoint == null || maxPoint == null) return null;
+
+                var width = maxPoint.X - minPoint.X;
+                var height = maxPoint.Y - minPoint.Y;
+
+                if (width < MinimumPartSizeForDimensionMillimeters &&
+                    height < MinimumPartSizeForDimensionMillimeters)
+                    return null;
+
+                return new PartBounds {
+                    MinX = minPoint.X,
+                    MaxX = maxPoint.X,
+                    MinY = minPoint.Y,
+                    MaxY = maxPoint.Y
+                };
             }
             finally {
                 workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
             }
         }
 
-        #endregion
+        private static bool ShouldUseSweepOutline(TSM.Part modelPart) {
+            return modelPart is TSM.LoftedPlate || modelPart is TSM.ContourPlate;
+        }
 
-        #region Sampling
-
-        private static List<TSG.Point> GetSamplePointsByAdaptiveZSweep(TSM.Solid solid) {
+        private static List<TSG.Point> GetSweptPlateOutlinePoints(TSM.Solid solid) {
             var points = new List<TSG.Point>();
             if (solid == null) return points;
 
-            var centerZ = (solid.MinimumPoint.Z + solid.MaximumPoint.Z) * 0.5;
+            var minX = solid.MinimumPoint.X;
+            var maxX = solid.MaximumPoint.X;
 
-            var upwardEmptySteps = 0;
-            var downwardEmptySteps = 0;
+            if (maxX - minX < 1e-6) return points;
 
-            var centerPoints = GetIntersectionPointsAtLocalZ(solid, centerZ);
-            if (centerPoints.Count > 0)
-                points.AddRange(centerPoints);
-            else {
-                upwardEmptySteps++;
-                downwardEmptySteps++;
+            var xValues = new List<double> { minX };
+            for (var x = minX + SweepStepMillimeters; x < maxX; x += SweepStepMillimeters)
+                xValues.Add(x);
+            xValues.Add(maxX);
+
+            foreach (var xValue in xValues) {
+                var enumerator = solid.GetAllIntersectionPoints(
+                    new TSG.Point(xValue, 0, 0),
+                    new TSG.Point(xValue, 1, 0),
+                    new TSG.Point(xValue, 0, 1)
+                );
+
+                while (enumerator.MoveNext())
+                    if (enumerator.Current is TSG.Point point)
+                        points.Add(new TSG.Point(xValue, point.Y, 0));
             }
 
-            for (var offset = ZStepMillimeters;
-                 upwardEmptySteps < MaximumEmptyStepsPerDirection ||
-                 downwardEmptySteps < MaximumEmptyStepsPerDirection;
-                 offset += ZStepMillimeters) {
-                if (upwardEmptySteps < MaximumEmptyStepsPerDirection) {
-                    var upperPoints = GetIntersectionPointsAtLocalZ(solid, centerZ + offset);
-
-                    if (upperPoints.Count > 0) {
-                        points.AddRange(upperPoints);
-                        upwardEmptySteps = 0;
-                    }
-                    else
-                        upwardEmptySteps++;
-                }
-
-                if (downwardEmptySteps < MaximumEmptyStepsPerDirection) {
-                    var lowerPoints = GetIntersectionPointsAtLocalZ(solid, centerZ - offset);
-
-                    if (lowerPoints.Count > 0) {
-                        points.AddRange(lowerPoints);
-                        downwardEmptySteps = 0;
-                    }
-                    else
-                        downwardEmptySteps++;
-                }
-            }
-
-            return RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
+            points = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
+            return points;
         }
 
         private static List<TSG.Point> GetIntersectionPointsAtLocalZ(TSM.Solid solid, double zValue) {
@@ -406,193 +420,375 @@ namespace HFT_DrawingHelper {
             return points;
         }
 
-        #endregion
+        private static List<TSG.Point> EnsureClosedOutline(List<TSG.Point> outline) {
+            if (outline == null || outline.Count < 2) return outline;
 
-        #region Envelope Building
+            var first = outline[0];
+            var last = outline[outline.Count - 1];
 
-        private static List<(TSG.Point A, TSG.Point B)> BuildLoftedPlateEnvelopeEdgesInView(List<TSG.Point> points) {
-            var edges = new List<(TSG.Point A, TSG.Point B)>();
-            if (points == null || points.Count < 3) return edges;
+            var distance = Math.Sqrt(
+                (first.X - last.X) * (first.X - last.X) +
+                (first.Y - last.Y) * (first.Y - last.Y)
+            );
 
-            var uniquePoints = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
-            if (uniquePoints.Count < 3) return edges;
+            if (distance > DuplicateToleranceMillimeters)
+                outline.Add(new TSG.Point(first.X, first.Y, 0));
 
-            var minimumX = uniquePoints.Min(point => point.X);
-            var maximumX = uniquePoints.Max(point => point.X);
-
-            if (maximumX - minimumX < 1e-6) return edges;
-
-            var binWidth = Math.Max(2.0, (maximumX - minimumX) / TargetBinCount);
-            var bins = new SortedDictionary<int, List<TSG.Point>>();
-
-            foreach (var point in uniquePoints) {
-                var binIndex = (int)Math.Floor((point.X - minimumX) / binWidth);
-
-                if (!bins.ContainsKey(binIndex))
-                    bins[binIndex] = new List<TSG.Point>();
-
-                bins[binIndex].Add(point);
-            }
-
-            var orderedBins = bins
-                .OrderBy(pair => pair.Key)
-                .Select(pair => pair.Value.OrderBy(point => point.Y).ThenBy(point => point.X).ToList())
-                .Where(bucket => bucket.Count > 0)
-                .ToList();
-
-            if (orderedBins.Count < 2) return edges;
-
-            var upperChain = new List<TSG.Point>();
-            var lowerChain = new List<TSG.Point>();
-
-            foreach (var bucket in orderedBins) {
-                var lowerPointIndex = (int)Math.Floor((bucket.Count - 1) * 0.15);
-                var upperPointIndex = (int)Math.Ceiling((bucket.Count - 1) * 0.85);
-
-                lowerChain.Add(new TSG.Point(bucket[lowerPointIndex].X, bucket[lowerPointIndex].Y, 0));
-                upperChain.Add(new TSG.Point(bucket[upperPointIndex].X, bucket[upperPointIndex].Y, 0));
-            }
-
-            upperChain = SmoothPolylineByMedianY(upperChain, SmoothingWindowRadius);
-            lowerChain = SmoothPolylineByMedianY(lowerChain, SmoothingWindowRadius);
-
-            if (upperChain.Count < 2 || lowerChain.Count < 2) return edges;
-
-            var leftLockedX = uniquePoints
-                .OrderBy(point => point.X)
-                .Take(Math.Min(20, uniquePoints.Count))
-                .Average(point => point.X);
-
-            var rightLockedX = uniquePoints
-                .OrderByDescending(point => point.X)
-                .Take(Math.Min(20, uniquePoints.Count))
-                .Average(point => point.X);
-
-            var leftLockCount = Math.Min(EdgeLockBinCount, Math.Min(upperChain.Count, lowerChain.Count));
-            var rightLockCount = Math.Min(EdgeLockBinCount, Math.Min(upperChain.Count, lowerChain.Count));
-
-            for (var index = 0; index < leftLockCount; index++) {
-                upperChain[index] = new TSG.Point(leftLockedX, upperChain[index].Y, 0);
-                lowerChain[index] = new TSG.Point(leftLockedX, lowerChain[index].Y, 0);
-            }
-
-            for (var index = 0; index < rightLockCount; index++) {
-                var upperIndex = upperChain.Count - 1 - index;
-                var lowerIndex = lowerChain.Count - 1 - index;
-
-                upperChain[upperIndex] = new TSG.Point(rightLockedX, upperChain[upperIndex].Y, 0);
-                lowerChain[lowerIndex] = new TSG.Point(rightLockedX, lowerChain[lowerIndex].Y, 0);
-            }
-
-            upperChain = RemoveNearDuplicates(upperChain, DuplicateToleranceMillimeters);
-            lowerChain = RemoveNearDuplicates(lowerChain, DuplicateToleranceMillimeters);
-
-            upperChain = RemoveVeryShortSegmentsFromOpenPolyline(upperChain, MinimumLengthMillimeters);
-            lowerChain = RemoveVeryShortSegmentsFromOpenPolyline(lowerChain, MinimumLengthMillimeters);
-
-            if (upperChain.Count < 2 || lowerChain.Count < 2) return edges;
-
-            var boundaryPoints = upperChain.Select(point => new TSG.Point(point.X, point.Y, 0)).ToList();
-
-            for (var index = lowerChain.Count - 1; index >= 0; index--)
-                boundaryPoints.Add(new TSG.Point(lowerChain[index].X, lowerChain[index].Y, 0));
-
-            boundaryPoints = RemoveNearDuplicates(boundaryPoints, DuplicateToleranceMillimeters);
-            boundaryPoints = RemoveVeryShortSegmentsFromClosedPolyline(boundaryPoints, MinimumLengthMillimeters);
-            boundaryPoints = RemoveCollinearPointsFromClosedPolyline(boundaryPoints, DuplicateToleranceMillimeters);
-
-            if (boundaryPoints.Count < 3) return edges;
-
-            for (var index = 0; index < boundaryPoints.Count; index++) {
-                var startPoint = boundaryPoints[index];
-                var endPoint = boundaryPoints[(index + 1) % boundaryPoints.Count];
-
-                if (ComputeDistance2D(startPoint, endPoint) <= DuplicateToleranceMillimeters) continue;
-
-                edges.Add((
-                    new TSG.Point(startPoint.X, startPoint.Y, 0),
-                    new TSG.Point(endPoint.X, endPoint.Y, 0)
-                ));
-            }
-
-            return edges;
+            return outline;
         }
 
-        private static List<(TSG.Point A, TSG.Point B)> BuildBeamEnvelopeEdgesInView(List<TSG.Point> points) {
-            var edges = new List<(TSG.Point A, TSG.Point B)>();
-            if (points == null || points.Count < 3) return edges;
+        private static List<TSG.Point> GetOpenOutlineVertices(List<TSG.Point> outline) {
+            if (outline == null) return null;
 
-            var uniquePoints = RemoveNearDuplicates(points, DuplicateToleranceMillimeters);
-            if (uniquePoints.Count < 3) return edges;
+            var result = RemoveNearDuplicates(new List<TSG.Point>(outline), DuplicateToleranceMillimeters);
+            if (result == null || result.Count == 0) return result;
 
-            var hull = BuildConvexHull2D(uniquePoints);
-            if (hull.Count < 3) return edges;
+            if (result.Count > 1) {
+                var first = result[0];
+                var last = result[result.Count - 1];
 
-            for (var index = 0; index < hull.Count; index++) {
-                var startPoint = hull[index];
-                var endPoint = hull[(index + 1) % hull.Count];
+                var distance = Math.Sqrt(
+                    (first.X - last.X) * (first.X - last.X) +
+                    (first.Y - last.Y) * (first.Y - last.Y)
+                );
 
-                if (ComputeDistance2D(startPoint, endPoint) <= DuplicateToleranceMillimeters) continue;
-
-                edges.Add((
-                    new TSG.Point(startPoint.X, startPoint.Y, 0),
-                    new TSG.Point(endPoint.X, endPoint.Y, 0)
-                ));
+                if (distance <= DuplicateToleranceMillimeters)
+                    result.RemoveAt(result.Count - 1);
             }
 
-            return edges;
+            return result;
+        }
+
+        private static List<TSG.Point> PrepareSegmentPath(List<TSG.Point> points) {
+            if (points == null) return null;
+
+            var result = RemoveNearDuplicates(new List<TSG.Point>(points), DuplicateToleranceMillimeters);
+            result = SimplifyPolyline(result);
+            result = RemoveNearDuplicates(result, DuplicateToleranceMillimeters);
+
+            return result;
+        }
+
+        private static List<TSG.Point> BuildUpperLowerChainOutline(List<TSG.Point> points) {
+            if (points == null || points.Count < 2) return null;
+
+            var byX = points
+                .GroupBy(point => point.X)
+                .OrderBy(group => group.Key)
+                .ToList();
+
+            if (byX.Count < 2) return null;
+
+            var upper = byX.Select(group => new TSG.Point(group.Key, group.Max(point => point.Y), 0)).ToList();
+            var lower = byX.Select(group => new TSG.Point(group.Key, group.Min(point => point.Y), 0)).ToList();
+
+            var outline = new List<TSG.Point>();
+            outline.AddRange(upper);
+            outline.AddRange(Enumerable.Reverse(lower));
+
+            return outline;
+        }
+
+        private static List<TSG.Point> SimplifyPolyline(
+            List<TSG.Point> points,
+            double toleranceMillimeters = 0.5
+        ) {
+            if (points == null || points.Count < 3) return points;
+
+            var current = new List<TSG.Point>(points);
+            var changed = true;
+
+            while (changed && current.Count >= 3) {
+                changed = false;
+                var next = new List<TSG.Point>();
+
+                var index = 0;
+                while (index < current.Count) {
+                    var remaining = current.Count - index;
+
+                    if (remaining >= 3) {
+                        var first = current[index];
+                        var middle = current[index + 1];
+                        var last = current[index + 2];
+
+                        var distance = GetDistanceToSegment(middle, first, last);
+
+                        if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], first))
+                            next.Add(first);
+
+                        if (distance <= toleranceMillimeters) {
+                            next.Add(last);
+                            changed = true;
+                        }
+                        else {
+                            next.Add(middle);
+                            next.Add(last);
+                        }
+
+                        index += 3;
+                    }
+                    else {
+                        for (var innerIndex = index; innerIndex < current.Count; innerIndex++)
+                            if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], current[innerIndex]))
+                                next.Add(current[innerIndex]);
+
+                        break;
+                    }
+                }
+
+                current = RemoveNearDuplicates(next, DuplicateToleranceMillimeters);
+            }
+
+            return current;
+        }
+
+        private static double GetDistanceToSegment(TSG.Point point, TSG.Point start, TSG.Point end) {
+            var segmentX = end.X - start.X;
+            var segmentY = end.Y - start.Y;
+            var segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+
+            if (segmentLengthSquared < 1e-12) {
+                var distanceX = point.X - start.X;
+                var distanceY = point.Y - start.Y;
+                return Math.Sqrt(distanceX * distanceX + distanceY * distanceY);
+            }
+
+            var t = (
+                (point.X - start.X) * segmentX +
+                (point.Y - start.Y) * segmentY
+            ) / segmentLengthSquared;
+
+            if (t < 0.0) t = 0.0;
+            if (t > 1.0) t = 1.0;
+
+            var projectedX = start.X + t * segmentX;
+            var projectedY = start.Y + t * segmentY;
+
+            var dx = point.X - projectedX;
+            var dy = point.Y - projectedY;
+
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        private static bool ArePointsEqual(TSG.Point first, TSG.Point second) {
+            if (first == null || second == null) return false;
+
+            return
+                Math.Abs(first.X - second.X) <= DuplicateToleranceMillimeters &&
+                Math.Abs(first.Y - second.Y) <= DuplicateToleranceMillimeters;
+        }
+
+        private static double GetCornerAngleDegrees(TSG.Point previous, TSG.Point current, TSG.Point next) {
+            var firstVectorX = current.X - previous.X;
+            var firstVectorY = current.Y - previous.Y;
+            var secondVectorX = next.X - current.X;
+            var secondVectorY = next.Y - current.Y;
+
+            var firstLength = Math.Sqrt(firstVectorX * firstVectorX + firstVectorY * firstVectorY);
+            var secondLength = Math.Sqrt(secondVectorX * secondVectorX + secondVectorY * secondVectorY);
+
+            if (firstLength < 1e-9 || secondLength < 1e-9) return 0.0;
+
+            var dot = (firstVectorX * secondVectorX + firstVectorY * secondVectorY) / (firstLength * secondLength);
+            if (dot > 1.0) dot = 1.0;
+            if (dot < -1.0) dot = -1.0;
+
+            return Math.Acos(dot) * 180.0 / Math.PI;
+        }
+
+        private static List<int> GetSignificantCornerIndices(List<TSG.Point> vertices) {
+            var result = new List<int>();
+            if (vertices == null || vertices.Count < 3) return result;
+
+            for (var index = 0; index < vertices.Count; index++) {
+                var previousIndex = index == 0 ? vertices.Count - 1 : index - 1;
+                var nextIndex = index == vertices.Count - 1 ? 0 : index + 1;
+
+                var angleDegrees = GetCornerAngleDegrees(
+                    vertices[previousIndex],
+                    vertices[index],
+                    vertices[nextIndex]
+                );
+
+                if (angleDegrees >= SignificantCornerAngleDegrees)
+                    result.Add(index);
+            }
+
+            return result;
+        }
+
+        private static List<TSG.Point> CollectPathBetweenCorners(
+            List<TSG.Point> vertices,
+            int startIndex,
+            int endIndex
+        ) {
+            var result = new List<TSG.Point>();
+            if (vertices == null || vertices.Count == 0) return result;
+
+            var index = startIndex;
+            result.Add(vertices[index]);
+
+            while (index != endIndex) {
+                index++;
+                if (index >= vertices.Count) index = 0;
+                result.Add(vertices[index]);
+            }
+
+            return result;
+        }
+
+        private static List<DrawingPartWithBounds> GetSingleDrawingPartFromView(TSD.View view) {
+            var result = new List<DrawingPartWithBounds>();
+            if (view == null) return result;
+
+            var addedModelIds = new HashSet<int>();
+            var iterator = view.GetAllObjects(typeof(TSD.ModelObject));
+            if (iterator == null) return result;
+
+            while (iterator.MoveNext()) {
+                if (!(iterator.Current is TSD.Part drawingPart)) continue;
+                if (drawingPart.Hideable != null && drawingPart.Hideable.IsHidden) continue;
+
+                if (!(MyModel.SelectModelObject(drawingPart.ModelIdentifier) is TSM.Part modelPart)) continue;
+
+                if (!addedModelIds.Add(modelPart.Identifier.ID)) continue;
+
+                result.Add(new DrawingPartWithBounds { DrawingPart = drawingPart });
+            }
+
+            return result;
         }
 
         #endregion
 
         #region Drawing And Numbering
 
-        private static void DrawEdges(TSD.View view, Dictionary<int, Tuple<TSG.Point, TSG.Point>> edgesByNumber) {
-            if (view == null || edgesByNumber == null || edgesByNumber.Count == 0) return;
+        private static void DrawEdgeNumbers(
+            TSD.View view,
+            Dictionary<int, NumberedEdgeGroup> numberedGroups
+        ) {
+            if (view == null || numberedGroups == null || numberedGroups.Count == 0) return;
 
-            var lineAttributes = new TSD.Line.LineAttributes {
-                Line = new TSD.LineTypeAttributes(TSD.LineTypes.SolidLine, TSD.DrawingColors.Red)
-            };
-
-            var numberedGroups = BuildNumberedEdgeGroups(
-                edgesByNumber,
-                JoinToleranceMillimeters,
-                NearStraightAngleDegrees
-            );
-
-            foreach (var pair in numberedGroups.OrderBy(p => p.Key)) {
+            foreach (var pair in numberedGroups.OrderBy(group => group.Key)) {
                 var group = pair.Value;
                 if (group == null) continue;
 
+                TSG.Point numberPoint;
+
                 if (!group.IsPolyline) {
                     var singleSegment = group.EdgeSegments[0];
-
-                    new TSD.Line(view, singleSegment.StartPoint, singleSegment.EndPoint, lineAttributes).Insert();
-
-                    var numberPoint = ComputeTextInsertionPointForSegment(
+                    numberPoint = ComputeTextInsertionPointForSegment(
                         singleSegment.StartPoint,
                         singleSegment.EndPoint,
                         NumberOffsetMillimeters
                     );
+                }
+                else
+                    numberPoint = ComputeTextInsertionPointForPolyline(
+                        group.PolylinePoints,
+                        NumberOffsetMillimeters
+                    );
 
-                    new TSD.Text(view, numberPoint, group.GroupNumber.ToString()).Insert();
+                new TSD.Text(view, numberPoint, group.GroupNumber.ToString()).Insert();
+            }
+        }
+
+        private static double ComputeGroupLength(NumberedEdgeGroup group) {
+            if (group == null) return 0.0;
+
+            if (group.IsPolyline) {
+                if (group.PolylinePoints == null || group.PolylinePoints.Count < 2) return 0.0;
+
+                var length = 0.0;
+                for (var index = 0; index < group.PolylinePoints.Count - 1; index++)
+                    length += ComputeDistance2D(group.PolylinePoints[index], group.PolylinePoints[index + 1]);
+
+                return length;
+            }
+
+            if (group.EdgeSegments == null || group.EdgeSegments.Count == 0) return 0.0;
+
+            var segment = group.EdgeSegments[0];
+            return ComputeDistance2D(segment.StartPoint, segment.EndPoint);
+        }
+
+        private static Dictionary<int, NumberedEdgeGroup> FilterShortNumberedEdgeGroups(
+            Dictionary<int, NumberedEdgeGroup> groupsByNumber,
+            double minimumLengthMillimeters
+        ) {
+            var result = new Dictionary<int, NumberedEdgeGroup>();
+            if (groupsByNumber == null || groupsByNumber.Count == 0) return result;
+
+            var newGroupNumber = 0;
+
+            foreach (var pair in groupsByNumber.OrderBy(item => item.Key)) {
+                var group = pair.Value;
+                if (group == null) continue;
+
+                var length = ComputeGroupLength(group);
+                if (length < minimumLengthMillimeters) continue;
+
+                newGroupNumber++;
+
+                var filteredGroup = new NumberedEdgeGroup {
+                    GroupNumber = newGroupNumber,
+                    IsPolyline = group.IsPolyline,
+                    SectionEdge = group.SectionEdge == null
+                        ? null
+                        : Tuple.Create(
+                            new TSG.Point(group.SectionEdge.Item1.X, group.SectionEdge.Item1.Y, 0),
+                            new TSG.Point(group.SectionEdge.Item2.X, group.SectionEdge.Item2.Y, 0)
+                        )
+                };
+
+                foreach (var edgeSegment in group.EdgeSegments)
+                    filteredGroup.EdgeSegments.Add(new EdgeSegment {
+                        EdgeNumber = edgeSegment.EdgeNumber,
+                        StartPoint = new TSG.Point(edgeSegment.StartPoint.X, edgeSegment.StartPoint.Y, 0),
+                        EndPoint = new TSG.Point(edgeSegment.EndPoint.X, edgeSegment.EndPoint.Y, 0)
+                    });
+
+                foreach (var polylinePoint in group.PolylinePoints)
+                    filteredGroup.PolylinePoints.Add(new TSG.Point(polylinePoint.X, polylinePoint.Y, 0));
+
+                result[newGroupNumber] = filteredGroup;
+            }
+
+            return result;
+        }
+
+        private static Dictionary<int, Tuple<TSG.Point, TSG.Point>> BuildEdgesByNumberFromOutlines(
+            List<PartOutlineSnapshot> outlineSnapshots
+        ) {
+            var result = new Dictionary<int, Tuple<TSG.Point, TSG.Point>>();
+            if (outlineSnapshots == null || outlineSnapshots.Count == 0) return result;
+
+            var number = 0;
+
+            foreach (var group in outlineSnapshots
+                         .Where(snapshot => snapshot?.SegmentGroups != null && snapshot.SegmentGroups.Count != 0)
+                         .SelectMany(snapshot =>
+                             snapshot.SegmentGroups.Where(group => group?.Points != null && group.Points.Count >= 2))) {
+                if (!group.IsPolyline || group.Points.Count == 2) {
+                    number++;
+                    result[number] = Tuple.Create(
+                        new TSG.Point(group.Points[0].X, group.Points[0].Y, 0),
+                        new TSG.Point(group.Points[1].X, group.Points[1].Y, 0)
+                    );
+
                     continue;
                 }
 
-                var polylinePointList = new TSD.PointList();
-                foreach (var polylinePoint in group.PolylinePoints)
-                    polylinePointList.Add(new TSG.Point(polylinePoint.X, polylinePoint.Y, 0));
-
-                var polyline = new TSD.Polyline(view, polylinePointList);
-                polyline.Insert();
-
-                var polylineNumberPoint = ComputeTextInsertionPointForPolyline(
-                    group.PolylinePoints,
-                    NumberOffsetMillimeters
-                );
-
-                new TSD.Text(view, polylineNumberPoint, group.GroupNumber.ToString()).Insert();
+                for (var index = 0; index < group.Points.Count - 1; index++) {
+                    number++;
+                    result[number] = Tuple.Create(
+                        new TSG.Point(group.Points[index].X, group.Points[index].Y, 0),
+                        new TSG.Point(group.Points[index + 1].X, group.Points[index + 1].Y, 0)
+                    );
+                }
             }
+
+            return result;
         }
 
         private static HashSet<int> ParseEdgeNumbers(string input) {
@@ -629,6 +825,10 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
+        private static HashSet<int> ParseGroupNumbers(string input) {
+            return ParseEdgeNumbers(input);
+        }
+
         private static Dictionary<int, NumberedEdgeGroup> BuildNumberedEdgeGroups(
             Dictionary<int, Tuple<TSG.Point, TSG.Point>> edgesByNumber,
             double joinToleranceMillimeters,
@@ -651,8 +851,8 @@ namespace HFT_DrawingHelper {
 
             var groupNumber = 0;
 
-            foreach (var polylineGroup in polylineGroups.Where(polylineGroup =>
-                         polylineGroup?.EdgeSegments != null && polylineGroup.EdgeSegments.Count != 0)) {
+            foreach (var polylineGroup in polylineGroups.Where(group =>
+                         group?.EdgeSegments != null && group.EdgeSegments.Count != 0)) {
                 groupNumber++;
 
                 var numberedGroup = new NumberedEdgeGroup {
@@ -932,182 +1132,74 @@ namespace HFT_DrawingHelper {
             );
         }
 
-        #endregion
-
-        #region Coordinate Systems And Transformations
-
-        private static List<(TSG.Point A, TSG.Point B)> TransformEdgesBetweenCoordinateSystems(
-            TSG.CoordinateSystem fromCoordinateSystem,
-            TSG.CoordinateSystem toCoordinateSystem,
-            List<(TSG.Point A, TSG.Point B)> edges
+        private static void DrawStraightSegmentPrimitive(
+            TSD.View view,
+            TSG.Point startPoint,
+            TSG.Point endPoint,
+            TSD.DrawingColors color
         ) {
-            if (edges == null || edges.Count == 0) return new List<(TSG.Point A, TSG.Point B)>();
+            if (view == null || startPoint == null || endPoint == null) return;
 
-            var fromToGlobal = TSG.MatrixFactory.FromCoordinateSystem(fromCoordinateSystem);
-            var globalToTarget = TSG.MatrixFactory.ToCoordinateSystem(toCoordinateSystem);
-
-            var result = new List<(TSG.Point A, TSG.Point B)>(edges.Count);
-
-            for (var index = 0; index < edges.Count; index++) {
-                var aGlobal = fromToGlobal.Transform(edges[index].A);
-                var bGlobal = fromToGlobal.Transform(edges[index].B);
-
-                var aTarget = globalToTarget.Transform(aGlobal);
-                var bTarget = globalToTarget.Transform(bGlobal);
-
-                result.Add((
-                    new TSG.Point(aTarget.X, aTarget.Y, 0),
-                    new TSG.Point(bTarget.X, bTarget.Y, 0)
-                ));
-            }
-
-            return result;
-        }
-
-        private static List<TSG.Point> TransformPointsBetweenCoordinateSystems(
-            TSG.CoordinateSystem fromCoordinateSystem,
-            TSG.CoordinateSystem toCoordinateSystem,
-            List<TSG.Point> points
-        ) {
-            var result = new List<TSG.Point>();
-            if (points == null || points.Count == 0) return result;
-
-            var fromToGlobal = TSG.MatrixFactory.FromCoordinateSystem(fromCoordinateSystem);
-            var globalToTarget = TSG.MatrixFactory.ToCoordinateSystem(toCoordinateSystem);
-
-            result.AddRange(
-                from point in points
-                select fromToGlobal.Transform(point)
-                into globalPoint
-                select globalToTarget.Transform(globalPoint)
-                into targetPoint
-                select new TSG.Point(targetPoint.X, targetPoint.Y, 0)
+            var distance = Math.Sqrt(
+                (startPoint.X - endPoint.X) * (startPoint.X - endPoint.X) +
+                (startPoint.Y - endPoint.Y) * (startPoint.Y - endPoint.Y)
             );
 
-            return result;
+            if (distance <= DuplicateToleranceMillimeters) return;
+
+            var points = new TSD.PointList {
+                new TSG.Point(startPoint.X, startPoint.Y, 0),
+                new TSG.Point(endPoint.X, endPoint.Y, 0)
+            };
+
+            var polyline = new TSD.Polyline(view, points);
+            polyline.Attributes.Line.Color = color;
+            polyline.Insert();
         }
 
-        private static TSG.Point ComputeEdgesCenter2D(List<(TSG.Point A, TSG.Point B)> edges) {
-            var points = new List<TSG.Point>(edges.Count * 2);
-            for (var index = 0; index < edges.Count; index++) {
-                points.Add(edges[index].A);
-                points.Add(edges[index].B);
-            }
-
-            var minX = points.Min(point => point.X);
-            var maxX = points.Max(point => point.X);
-            var minY = points.Min(point => point.Y);
-            var maxY = points.Max(point => point.Y);
-
-            return new TSG.Point((minX + maxX) * 0.5, (minY + maxY) * 0.5, 0);
-        }
-
-        private static List<(TSG.Point A, TSG.Point B)> RotateEdgesAroundCenter2D(
-            List<(TSG.Point A, TSG.Point B)> edges,
-            double angleDegrees
+        private static void DrawPolylinePrimitive(
+            TSD.View view,
+            List<TSG.Point> points,
+            TSD.DrawingColors color
         ) {
-            if (edges == null || edges.Count == 0) return new List<(TSG.Point A, TSG.Point B)>();
+            if (view == null || points == null || points.Count < 2) return;
 
-            var beforePoints = new List<TSG.Point>(edges.Count * 2);
-            for (var index = 0; index < edges.Count; index++) {
-                beforePoints.Add(edges[index].A);
-                beforePoints.Add(edges[index].B);
-            }
-
-            var beforeMinX = beforePoints.Min(point => point.X);
-            var beforeMinY = beforePoints.Min(point => point.Y);
-
-            var center = ComputeEdgesCenter2D(edges);
-            var radians = angleDegrees * Math.PI / 180.0;
-            var cos = Math.Cos(radians);
-            var sin = Math.Sin(radians);
-
-            var rotatedEdges = new List<(TSG.Point A, TSG.Point B)>(edges.Count);
-            for (var index = 0; index < edges.Count; index++)
-                rotatedEdges.Add((
-                    RotatePointAroundCenter2D(edges[index].A, center, cos, sin),
-                    RotatePointAroundCenter2D(edges[index].B, center, cos, sin)
-                ));
-
-            var afterPoints = new List<TSG.Point>(rotatedEdges.Count * 2);
-            for (var index = 0; index < rotatedEdges.Count; index++) {
-                afterPoints.Add(rotatedEdges[index].A);
-                afterPoints.Add(rotatedEdges[index].B);
-            }
-
-            var afterMinX = afterPoints.Min(point => point.X);
-            var afterMinY = afterPoints.Min(point => point.Y);
-
-            var normalizedAngle = (angleDegrees % 360.0 + 360.0) % 360.0;
-
-            double deltaX;
-            double deltaY;
-
-            if (Math.Abs(normalizedAngle - 90.0) < 1e-6 || Math.Abs(normalizedAngle - 270.0) < 1e-6) {
-                deltaX = beforeMinY - afterMinX;
-                deltaY = beforeMinX - afterMinY;
-            }
-            else {
-                deltaX = beforeMinX - afterMinX;
-                deltaY = beforeMinY - afterMinY;
-            }
-
-            for (var index = 0; index < rotatedEdges.Count; index++) {
-                var a = rotatedEdges[index].A;
-                var b = rotatedEdges[index].B;
-
-                rotatedEdges[index] = (
-                    new TSG.Point(a.X + deltaX, a.Y + deltaY, 0),
-                    new TSG.Point(b.X + deltaX, b.Y + deltaY, 0)
-                );
-            }
-
-            return rotatedEdges;
-        }
-
-        private static List<(TSG.Point A, TSG.Point B)> TranslateEdgesDownByHalfHeight(
-            List<(TSG.Point A, TSG.Point B)> edges
-        ) {
-            if (edges == null || edges.Count == 0) return edges;
-
-            var points = new List<TSG.Point>(edges.Count * 2);
-            for (var index = 0; index < edges.Count; index++) {
-                points.Add(edges[index].A);
-                points.Add(edges[index].B);
-            }
-
-            var minY = points.Min(point => point.Y);
-            var maxY = points.Max(point => point.Y);
-            var halfHeight = (maxY - minY) * 0.5;
-
-            var result = new List<(TSG.Point A, TSG.Point B)>(edges.Count);
-            for (var index = 0; index < edges.Count; index++) {
-                var a = edges[index].A;
-                var b = edges[index].B;
-
-                result.Add((
-                    new TSG.Point(a.X, a.Y - halfHeight, 0),
-                    new TSG.Point(b.X, b.Y - halfHeight, 0)
-                ));
-            }
-
-            return result;
-        }
-
-        private static TSG.Point RotatePointAroundCenter2D(
-            TSG.Point point,
-            TSG.Point center,
-            double cos,
-            double sin
-        ) {
-            var dx = point.X - center.X;
-            var dy = point.Y - center.Y;
-
-            return new TSG.Point(
-                center.X + dx * cos - dy * sin,
-                center.Y + dx * sin + dy * cos,
-                0
+            var cleanedPoints = RemoveNearDuplicates(
+                new List<TSG.Point>(points),
+                DuplicateToleranceMillimeters
             );
+
+            if (cleanedPoints == null || cleanedPoints.Count < 2) return;
+
+            switch (cleanedPoints.Count) {
+                case 2:
+                    DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
+                    return;
+                case 3: {
+                    var first = cleanedPoints[0];
+                    var last = cleanedPoints[cleanedPoints.Count - 1];
+
+                    var distance = Math.Sqrt(
+                        (first.X - last.X) * (first.X - last.X) +
+                        (first.Y - last.Y) * (first.Y - last.Y)
+                    );
+
+                    if (distance <= DuplicateToleranceMillimeters) {
+                        DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
+                        return;
+                    }
+
+                    break;
+                }
+            }
+
+            var polylinePoints = new TSD.PointList();
+            foreach (var point in cleanedPoints)
+                polylinePoints.Add(new TSG.Point(point.X, point.Y, 0));
+
+            var polyline = new TSD.Polyline(view, polylinePoints);
+            polyline.Attributes.Line.Color = color;
+            polyline.Insert();
         }
 
         #endregion
@@ -1157,17 +1249,6 @@ namespace HFT_DrawingHelper {
                 select point).ToList();
         }
 
-        private static List<TSG.Point> SortByAngle(List<TSG.Point> points) {
-            if (points == null || points.Count < 3) return points ?? new List<TSG.Point>();
-
-            var centerX = points.Average(point => point.X);
-            var centerY = points.Average(point => point.Y);
-
-            return points
-                .OrderBy(point => Math.Atan2(point.Y - centerY, point.X - centerX))
-                .ToList();
-        }
-
         private static List<TSG.Point> BuildConvexHull2D(List<TSG.Point> points) {
             if (points == null || points.Count < 3) return points ?? new List<TSG.Point>();
 
@@ -1207,121 +1288,9 @@ namespace HFT_DrawingHelper {
                    (secondPoint.Y - firstPoint.Y) * (thirdPoint.X - firstPoint.X);
         }
 
-        private static List<TSG.Point> SmoothPolylineByMedianY(List<TSG.Point> points, int windowRadius) {
-            var result = new List<TSG.Point>();
-            if (points == null || points.Count == 0) return result;
-
-            for (var index = 0; index < points.Count; index++) {
-                var fromIndex = Math.Max(0, index - windowRadius);
-                var toIndex = Math.Min(points.Count - 1, index + windowRadius);
-
-                var yValues = new List<double>();
-                for (var innerIndex = fromIndex; innerIndex <= toIndex; innerIndex++)
-                    yValues.Add(points[innerIndex].Y);
-
-                yValues.Sort();
-                result.Add(new TSG.Point(points[index].X, yValues[yValues.Count / 2], 0));
-            }
-
-            return result;
-        }
-
-        private static List<TSG.Point> RemoveVeryShortSegmentsFromOpenPolyline(
-            List<TSG.Point> points,
-            double minimumSegmentLengthMillimeters
-        ) {
-            if (points == null || points.Count < 2) return points ?? new List<TSG.Point>();
-
-            var result = new List<TSG.Point>(points);
-            var changed = true;
-
-            while (changed && result.Count >= 2) {
-                changed = false;
-
-                for (var index = 0; index < result.Count - 1; index++) {
-                    if (ComputeDistance2D(result[index], result[index + 1]) >= minimumSegmentLengthMillimeters)
-                        continue;
-
-                    result.RemoveAt(index + 1);
-                    changed = true;
-                    break;
-                }
-            }
-
-            return result;
-        }
-
-        private static List<TSG.Point> RemoveVeryShortSegmentsFromClosedPolyline(
-            List<TSG.Point> points,
-            double minimumSegmentLengthMillimeters
-        ) {
-            if (points == null || points.Count < 3) return points ?? new List<TSG.Point>();
-
-            var result = new List<TSG.Point>(points);
-            var changed = true;
-
-            while (changed && result.Count >= 3) {
-                changed = false;
-
-                for (var index = 0; index < result.Count; index++) {
-                    var nextIndex = (index + 1) % result.Count;
-
-                    if (ComputeDistance2D(result[index], result[nextIndex]) >= minimumSegmentLengthMillimeters)
-                        continue;
-
-                    result.RemoveAt(nextIndex);
-                    changed = true;
-                    break;
-                }
-            }
-
-            return result;
-        }
-
-        private static List<TSG.Point> RemoveCollinearPointsFromClosedPolyline(
-            List<TSG.Point> points,
-            double toleranceMillimeters
-        ) {
-            if (points == null || points.Count < 3) return points ?? new List<TSG.Point>();
-
-            var result = new List<TSG.Point>(points);
-            var changed = true;
-
-            while (changed && result.Count >= 3) {
-                changed = false;
-
-                for (var index = 0; index < result.Count; index++) {
-                    var previousPoint = result[(index - 1 + result.Count) % result.Count];
-                    var currentPoint = result[index];
-                    var nextPoint = result[(index + 1) % result.Count];
-
-                    var crossValue = Math.Abs(
-                        (currentPoint.X - previousPoint.X) * (nextPoint.Y - previousPoint.Y) -
-                        (currentPoint.Y - previousPoint.Y) * (nextPoint.X - previousPoint.X)
-                    );
-
-                    if (crossValue > toleranceMillimeters) continue;
-
-                    result.RemoveAt(index);
-                    changed = true;
-                    break;
-                }
-            }
-
-            return result;
-        }
-
         #endregion
 
         #region Nested Types
-
-        private sealed class EdgeDetectionResult {
-            public string SourceName { get; set; }
-            public Dictionary<int, Tuple<TSG.Point, TSG.Point>> EdgesByNumber { get; set; }
-            public string ErrorMessage { get; set; }
-
-            public bool HasEdges => EdgesByNumber != null && EdgesByNumber.Count > 0;
-        }
 
         private sealed class EdgeSegment {
             public int EdgeNumber { get; set; }

@@ -21,9 +21,9 @@
             BorderThickness="1"
             CornerRadius="8">
         <Border.Effect>
-            <DropShadowEffect BlurRadius="18"
-                              ShadowDepth="3"
-                              Opacity="0.45"
+            <DropShadowEffect BlurRadius="12"
+                              ShadowDepth="2"
+                              Opacity="0.4"
                               Color="#000000" />
         </Border.Effect>
 
@@ -138,7 +138,7 @@
                            Margin="0,0,0,6" />
 
                 <Button x:Name="ShowSelectedPartsButton"
-                        Content="&#xE762;  Pokaż zaznaczone"
+                        Content="Pokaż zaznaczone"
                         Style="{StaticResource SecondaryButton}"
                         HorizontalAlignment="Stretch"
                         Height="32"
@@ -436,7 +436,8 @@
                                                                   Background="Transparent"
                                                                   BorderThickness="0"
                                                                   Cursor="Hand">
-                                                        <TextBlock Text="▾"
+                                                        <TextBlock Text="&#xE70D;"
+                                                                   FontFamily="Segoe MDL2 Assets"
                                                                    FontSize="12"
                                                                    HorizontalAlignment="Center"
                                                                    VerticalAlignment="Center">

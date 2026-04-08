@@ -115,6 +115,11 @@ namespace HFT_DrawingHelper {
 
         #region Geometry Helpers
 
+        private enum CurvedSideSelectionMode {
+            Horizontal,
+            Vertical
+        }
+
         private static List<double> MergeAndSort(IEnumerable<double> rawValues, double tolerance) {
             var sorted = rawValues
                 .Where(v => !double.IsNaN(v) && !double.IsInfinity(v))
@@ -266,22 +271,17 @@ namespace HFT_DrawingHelper {
                 if (!(it.Current is TSD.Polyline poly)) continue;
                 var pts = new List<TSG.Point>();
                 foreach (var item in poly.Points)
-                    if (item is TSG.Point p)
-                        pts.Add(p);
+                    if (item is TSG.Point point)
+                        pts.Add(point);
+
                 if (pts.Count == 0) continue;
+
                 result.Add(new TSG.Point(pts[0].X, pts[0].Y, 0));
                 if (pts.Count > 1)
                     result.Add(new TSG.Point(pts[pts.Count - 1].X, pts[pts.Count - 1].Y, 0));
             }
 
             return result;
-        }
-
-        private static void AddEndpointPair(List<TSG.Point> collector, TSG.Point startPoint, TSG.Point endPoint) {
-            if (collector == null || startPoint == null || endPoint == null) return;
-
-            collector.Add(new TSG.Point(startPoint.X, startPoint.Y, 0));
-            collector.Add(new TSG.Point(endPoint.X, endPoint.Y, 0));
         }
 
         private static List<double> GetPerElementHorizontalCoordinates(
@@ -343,6 +343,215 @@ namespace HFT_DrawingHelper {
                 points.Add(new TSG.Point(anchorX, y, 0));
         }
 
+        private static List<TSG.Point> RemoveDuplicatePointsByDistance(
+            IEnumerable<TSG.Point> points,
+            double tolerance
+        ) {
+            var result = new List<TSG.Point>();
+            if (points == null) return result;
+
+            foreach (var point in points.Where(p => p != null)) {
+                var exists = result.Any(existing =>
+                    Math.Abs(existing.X - point.X) <= tolerance &&
+                    Math.Abs(existing.Y - point.Y) <= tolerance
+                );
+
+                if (!exists)
+                    result.Add(new TSG.Point(point.X, point.Y, 0));
+            }
+
+            return result;
+        }
+
+        private static double GetPointParameterOnSegment(TSG.Point point, TSG.Point start, TSG.Point end) {
+            var dx = end.X - start.X;
+            var dy = end.Y - start.Y;
+            var lengthSquared = dx * dx + dy * dy;
+
+            if (lengthSquared < 1e-9) return 0.0;
+
+            return ((point.X - start.X) * dx + (point.Y - start.Y) * dy) / lengthSquared;
+        }
+
+        private static List<TSG.Point> SortPointsAlongArcChord(
+            IEnumerable<TSG.Point> points,
+            TSG.Point arcStart,
+            TSG.Point arcEnd
+        ) {
+            return points
+                .Where(point => point != null)
+                .OrderBy(point => GetPointParameterOnSegment(point, arcStart, arcEnd))
+                .ToList();
+        }
+
+        private static List<TSG.Point> FilterPointsBySelectedSide(
+            IEnumerable<TSG.Point> points,
+            PartBounds bounds,
+            DimensionOptions options,
+            CurvedSideSelectionMode curvedSideSelectionMode
+        ) {
+            var validPoints = points?.Where(point => point != null).ToList() ?? new List<TSG.Point>();
+            if (validPoints.Count == 0 || bounds == null) return new List<TSG.Point>();
+
+            if (curvedSideSelectionMode == CurvedSideSelectionMode.Horizontal) {
+                var midY = (bounds.MinY + bounds.MaxY) / 2.0;
+                var isAbove = options.HorizontalPlacement == HorizontalDimensionPlacement.Above;
+
+                return validPoints
+                    .Where(point => isAbove ? point.Y >= midY : point.Y <= midY)
+                    .Select(point => new TSG.Point(point.X, point.Y, 0))
+                    .ToList();
+            }
+
+            var midX = (bounds.MinX + bounds.MaxX) / 2.0;
+            var isRight = options.VerticalPlacement == VerticalDimensionPlacement.Right;
+
+            return validPoints
+                .Where(point => isRight ? point.X >= midX : point.X <= midX)
+                .Select(point => new TSG.Point(point.X, point.Y, 0))
+                .ToList();
+        }
+
+        private static List<TSG.Point> GetAssemblyStartAndEndPoints(
+            IEnumerable<TSG.Point> filteredPoints,
+            DimensionOptions options
+        ) {
+            if (filteredPoints == null || !options.HasUserArcPoints)
+                return new List<TSG.Point>();
+
+            var points = filteredPoints
+                .Where(point => point != null)
+                .Select(point => new TSG.Point(point.X, point.Y, 0))
+                .ToList();
+
+            points = RemoveDuplicatePointsByDistance(points, DimensionMergeToleranceMillimeters);
+            points = SortPointsAlongArcChord(points, options.UserArcStart, options.UserArcEnd);
+
+            if (points.Count == 0)
+                return new List<TSG.Point>();
+
+            if (points.Count == 1)
+                return new List<TSG.Point> {
+                    new TSG.Point(points[0].X, points[0].Y, 0)
+                };
+
+            return new List<TSG.Point> {
+                new TSG.Point(points[0].X, points[0].Y, 0),
+                new TSG.Point(points[points.Count - 1].X, points[points.Count - 1].Y, 0)
+            };
+        }
+
+        private static List<TSG.Point> GetCurvedDimensionReferencePoints(
+            DimensionGeometrySnapshot snapshot,
+            DimensionOptions options,
+            CurvedSideSelectionMode curvedSideSelectionMode,
+            ElementEndpointsSnapshot element = null
+        ) {
+            if (snapshot == null || !options.HasUserArcPoints)
+                return new List<TSG.Point>();
+
+            var result = new List<TSG.Point>();
+
+            var allFilteredPoints = new List<TSG.Point>();
+
+            foreach (var currentElement in snapshot.ElementEndpoints.Where(currentElement =>
+                         currentElement?.Endpoints != null)) {
+                var currentBounds = GetElementLocalBounds(currentElement);
+                var filteredPoints = FilterPointsBySelectedSide(
+                    currentElement.Endpoints,
+                    currentBounds,
+                    options,
+                    curvedSideSelectionMode
+                );
+
+                allFilteredPoints.AddRange(filteredPoints);
+            }
+
+            allFilteredPoints = RemoveDuplicatePointsByDistance(
+                allFilteredPoints,
+                DimensionMergeToleranceMillimeters
+            );
+            
+            if (snapshot.AllPartsBounds != null) {
+                if (curvedSideSelectionMode == CurvedSideSelectionMode.Horizontal) {
+                    var isAbove = options.HorizontalPlacement == HorizontalDimensionPlacement.Above;
+                    var anchorY = isAbove
+                        ? snapshot.AllPartsBounds.MaxY
+                        : snapshot.AllPartsBounds.MinY;
+                    allFilteredPoints.Add(new TSG.Point(snapshot.AllPartsBounds.MinX, anchorY, 0));
+                    allFilteredPoints.Add(new TSG.Point(snapshot.AllPartsBounds.MaxX, anchorY, 0));
+                }
+                else {
+                    var isRight = options.VerticalPlacement == VerticalDimensionPlacement.Right;
+                    var anchorX = isRight
+                        ? snapshot.AllPartsBounds.MaxX
+                        : snapshot.AllPartsBounds.MinX;
+                    allFilteredPoints.Add(new TSG.Point(anchorX, snapshot.AllPartsBounds.MinY, 0));
+                    allFilteredPoints.Add(new TSG.Point(anchorX, snapshot.AllPartsBounds.MaxY, 0));
+                }
+
+                allFilteredPoints = RemoveDuplicatePointsByDistance(
+                    allFilteredPoints,
+                    DimensionMergeToleranceMillimeters
+                );
+            }
+            
+            var assemblyStartEnd = GetAssemblyStartAndEndPoints(allFilteredPoints, options);
+            result.AddRange(assemblyStartEnd);
+
+            if (element != null) {
+                var elementBounds = GetElementLocalBounds(element);
+                var filteredElementPoints = FilterPointsBySelectedSide(
+                    element.Endpoints,
+                    elementBounds,
+                    options,
+                    curvedSideSelectionMode
+                );
+
+                result.AddRange(filteredElementPoints);
+            }
+            else
+                result.AddRange(allFilteredPoints);
+
+            result = RemoveDuplicatePointsByDistance(result, DimensionMergeToleranceMillimeters);
+            result = SortPointsAlongArcChord(result, options.UserArcStart, options.UserArcEnd);
+
+            return result;
+        }
+
+        private static void CreateCurvedDimensionSet(
+            TSD.View selectedView,
+            List<TSG.Point> referencePoints,
+            DimensionOptions options,
+            double offsetMillimeters
+        ) {
+            if (selectedView == null || referencePoints == null || referencePoints.Count < 2) return;
+            if (!options.HasUserArcPoints) return;
+
+            var pointList = new TSD.PointList();
+            foreach (var point in referencePoints)
+                pointList.Add(new TSG.Point(point.X, point.Y, 0));
+
+            LogDebug("=== CreateCurvedDimensionSet ===");
+            LogDebug("referencePoints.Count = " + pointList.Count);
+            LogPoint("arcStart", options.UserArcStart);
+            LogPoint("arcMid", options.UserArcMid);
+            LogPoint("arcEnd", options.UserArcEnd);
+            LogPointsSummary("Curved referencePoints", referencePoints);
+
+            var curvedHandler = new TSD.CurvedDimensionSetHandler();
+            curvedHandler.CreateCurvedDimensionSetRadial(
+                selectedView,
+                options.UserArcStart,
+                options.UserArcMid,
+                options.UserArcEnd,
+                pointList,
+                offsetMillimeters
+            );
+
+            LogDebug("Utworzono CurvedDimensionSetRadial.");
+        }
+
         #endregion
 
         #region Entry Point
@@ -401,6 +610,78 @@ namespace HFT_DrawingHelper {
                 }
 
                 foreach (var option in validOptions) {
+                    if (option.DimensionType == DimensionType.Curved) {
+                        if (option.CreateHorizontal) {
+                            if (option.HorizontalFarPlacement) {
+                                var curvedPoints = GetCurvedDimensionReferencePoints(
+                                    snapshot,
+                                    option,
+                                    CurvedSideSelectionMode.Horizontal
+                                );
+                                if (curvedPoints.Count >= 2)
+                                    CreateCurvedDimensionSet(
+                                        snapshot.View,
+                                        curvedPoints,
+                                        option,
+                                        FarDimensionOffsetMillimeters
+                                    );
+                            }
+                            else
+                                foreach (var element in snapshot.ElementEndpoints) {
+                                    var curvedPoints = GetCurvedDimensionReferencePoints(
+                                        snapshot,
+                                        option,
+                                        CurvedSideSelectionMode.Horizontal,
+                                        element
+                                    );
+                                    if (curvedPoints.Count < 2) continue;
+
+                                    CreateCurvedDimensionSet(
+                                        snapshot.View,
+                                        curvedPoints,
+                                        option,
+                                        PerElementDimensionOffsetMillimeters
+                                    );
+                                }
+                        }
+
+                        if (option.CreateVertical) {
+                            if (option.VerticalFarPlacement) {
+                                var curvedPoints = GetCurvedDimensionReferencePoints(
+                                    snapshot,
+                                    option,
+                                    CurvedSideSelectionMode.Vertical
+                                );
+                                if (curvedPoints.Count >= 2)
+                                    CreateCurvedDimensionSet(
+                                        snapshot.View,
+                                        curvedPoints,
+                                        option,
+                                        FarDimensionOffsetMillimeters
+                                    );
+                            }
+                            else
+                                foreach (var element in snapshot.ElementEndpoints) {
+                                    var curvedPoints = GetCurvedDimensionReferencePoints(
+                                        snapshot,
+                                        option,
+                                        CurvedSideSelectionMode.Vertical,
+                                        element
+                                    );
+                                    if (curvedPoints.Count < 2) continue;
+
+                                    CreateCurvedDimensionSet(
+                                        snapshot.View,
+                                        curvedPoints,
+                                        option,
+                                        PerElementDimensionOffsetMillimeters
+                                    );
+                                }
+                        }
+
+                        continue;
+                    }
+
                     if (option.CreateHorizontal) {
                         if (option.HorizontalFarPlacement)
                             CreateOverallHorizontalDimensions(snapshot, option);
@@ -499,7 +780,6 @@ namespace HFT_DrawingHelper {
         private const double FarDimensionOffsetMillimeters = 20.0;
         private const double PerElementDimensionOffsetMillimeters = 100.0;
         private const double MinimumDimensionSpanMillimeters = 1.0;
-        private const double CurvedDimensionArcDepthRatio = 0.15;
         private const double DimensionMergeToleranceMillimeters = 1.0;
         private const double MinimumPartSizeForDimensionMillimeters = 10.0;
         private const double SweepStepMillimeters = 1.0;
@@ -766,56 +1046,25 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
-            TSG.Point arcStart, arcMid, arcEnd;
-            if (options.HasUserArcPoints) {
-                arcStart = options.UserArcStart;
-                arcMid = options.UserArcMid;
-                arcEnd = options.UserArcEnd;
-                LogDebug("Użyto wskazanych punktów łuku.");
-            }
-            else {
-                (arcStart, arcMid, arcEnd) = ComputeArcPoints(dimensionPoints, directionVector);
-                LogDebug("Użyto automatycznych punktów łuku.");
+            if (!options.HasUserArcPoints) {
+                LogDebug("Brak punktów łuku użytkownika dla curved.");
+                return;
             }
 
-            LogPoint("arcStart", arcStart);
-            LogPoint("arcMid", arcMid);
-            LogPoint("arcEnd", arcEnd);
+            LogPoint("arcStart", options.UserArcStart);
+            LogPoint("arcMid", options.UserArcMid);
+            LogPoint("arcEnd", options.UserArcEnd);
 
             var curvedHandler = new TSD.CurvedDimensionSetHandler();
-            curvedHandler.CreateCurvedDimensionSetOrthogonal(
+            curvedHandler.CreateCurvedDimensionSetRadial(
                 selectedView,
-                arcStart,
-                arcMid,
-                arcEnd,
+                options.UserArcStart,
+                options.UserArcMid,
+                options.UserArcEnd,
                 dimensionPoints,
                 offsetMillimeters
             );
-            LogDebug("Utworzono CurvedDimensionSet.");
-        }
-
-        private static (TSG.Point, TSG.Point, TSG.Point) ComputeArcPoints(
-            TSD.PointList dimensionPoints,
-            TSG.Vector directionVector
-        ) {
-            var points = dimensionPoints.OfType<TSG.Point>().ToList();
-            var first = points.First();
-            var last = points.Last();
-
-            var midX = (first.X + last.X) / 2.0;
-            var midY = (first.Y + last.Y) / 2.0;
-
-            var spanX = last.X - first.X;
-            var spanY = last.Y - first.Y;
-            var arcDepth = Math.Sqrt(spanX * spanX + spanY * spanY) * CurvedDimensionArcDepthRatio;
-
-            LogDebug("ComputeArcPoints: arcDepth = " + arcDepth.ToString("0.###"));
-
-            return (
-                new TSG.Point(first.X, first.Y, 0),
-                new TSG.Point(midX + directionVector.X * arcDepth, midY + directionVector.Y * arcDepth, 0),
-                new TSG.Point(last.X, last.Y, 0)
-            );
+            LogDebug("Utworzono CurvedDimensionSetRadial.");
         }
 
         #endregion
@@ -1112,7 +1361,6 @@ namespace HFT_DrawingHelper {
                     var bounds = GetPartAabbInViewSpace(view, modelPart);
                     if (bounds == null) continue;
 
-                    var collectedEndpoints = new List<TSG.Point>();
                     List<TSG.Point> outline;
 
                     if (ShouldUseSweepOutline(modelPart)) {
@@ -1150,11 +1398,14 @@ namespace HFT_DrawingHelper {
                         if (outline == null || outline.Count < 4) continue;
                     }
 
-                    DrawOutlineByAngleType(view, outline, collectedEndpoints);
+                    DrawOutlineByAngleType(view, outline);
+
+                    var realVertices = GetOpenOutlineVertices(outline);
+                    if (realVertices == null || realVertices.Count == 0) continue;
 
                     result.Add(new ElementEndpointsSnapshot {
                         Bounds = bounds,
-                        Endpoints = collectedEndpoints
+                        Endpoints = realVertices.Select(p => new TSG.Point(p.X, p.Y, 0)).ToList()
                     });
                 }
             }
@@ -1167,8 +1418,7 @@ namespace HFT_DrawingHelper {
 
         private static void DrawOutlineByAngleType(
             TSD.View view,
-            List<TSG.Point> outline,
-            List<TSG.Point> endpointCollector
+            List<TSG.Point> outline
         ) {
             if (view == null || outline == null || outline.Count < 2) return;
 
@@ -1177,7 +1427,6 @@ namespace HFT_DrawingHelper {
 
             if (vertices.Count == 2) {
                 DrawStraightSegmentPrimitive(view, vertices[0], vertices[1], TSD.DrawingColors.Green);
-                AddEndpointPair(endpointCollector, vertices[0], vertices[1]);
                 return;
             }
 
@@ -1187,7 +1436,6 @@ namespace HFT_DrawingHelper {
                 case 0:
                 case 1:
                     DrawPolylinePrimitive(view, vertices, TSD.DrawingColors.Green);
-                    AddEndpointPair(endpointCollector, vertices.First(), vertices.Last());
                     return;
             }
 
@@ -1200,14 +1448,10 @@ namespace HFT_DrawingHelper {
 
                 if (path == null || path.Count < 2) continue;
 
-                if (path.Count == 2) {
+                if (path.Count == 2)
                     DrawStraightSegmentPrimitive(view, path[0], path[1], TSD.DrawingColors.Red);
-                    AddEndpointPair(endpointCollector, path[0], path[1]);
-                }
-                else {
+                else
                     DrawPolylinePrimitive(view, path, TSD.DrawingColors.Green);
-                    AddEndpointPair(endpointCollector, path.First(), path.Last());
-                }
             }
         }
 

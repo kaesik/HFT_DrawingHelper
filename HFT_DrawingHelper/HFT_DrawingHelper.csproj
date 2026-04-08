@@ -163,6 +163,7 @@
             <Generator>MSBuild:Compile</Generator>
             <SubType>Designer</SubType>
         </ApplicationDefinition>
+        <Compile Include="MainWindow.Geometry.cs"/>
         <Compile Include="MainWindow.PartSelector.cs"/>
         <Compile Include="SelectedPartGroup.cs"/>
         <Compile Include="SelectedPartItem.cs"/>

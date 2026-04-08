@@ -47,6 +47,7 @@ namespace HFT_DrawingHelper {
                     }
                 }
                 catch {
+                    // ignored
                 }
 
                 _partItems.Add(new SelectedPartItem {
@@ -86,10 +87,7 @@ namespace HFT_DrawingHelper {
             if (!(sender is CheckBox checkBox)) return;
             if (!(checkBox.DataContext is SelectedPartGroup group)) return;
 
-            if (group.IsChecked == true)
-                group.SetCheckedForAll(false);
-            else
-                group.SetCheckedForAll(true);
+            group.SetCheckedForAll(group.IsChecked != true);
 
             e.Handled = true;
         }
@@ -162,14 +160,13 @@ namespace HFT_DrawingHelper {
             }
         }
 
-        private void ClearDrawingSelectionInEditor() {
+        private static void ClearDrawingSelectionInEditor() {
             var drawingHandler = new TSD.DrawingHandler();
             if (!drawingHandler.GetConnectionStatus()) return;
 
             var selector = drawingHandler.GetDrawingObjectSelector();
-            if (selector == null) return;
 
-            selector.UnselectAllObjects();
+            selector?.UnselectAllObjects();
         }
 
         private void SelectAllPartsButton_Click(object sender, RoutedEventArgs e) {
@@ -187,14 +184,6 @@ namespace HFT_DrawingHelper {
             _overrideSelectedParts = null;
             ClearPreviewSelection();
             ClearDrawingSelectionInEditor();
-        }
-
-        private List<TSD.Part> GetCheckedDrawingParts() {
-            return _partGroups
-                .SelectMany(group => group.Items)
-                .Where(item => item.IsChecked && item.DrawingPart != null)
-                .Select(item => item.DrawingPart)
-                .ToList();
         }
     }
 }

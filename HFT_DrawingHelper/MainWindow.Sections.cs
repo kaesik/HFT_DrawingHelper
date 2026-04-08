@@ -2,8 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
-using TSG = Tekla.Structures.Geometry3d;
 using TSD = Tekla.Structures.Drawing;
+using TSG = Tekla.Structures.Geometry3d;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {

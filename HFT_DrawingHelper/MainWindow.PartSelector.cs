@@ -37,8 +37,8 @@ namespace HFT_DrawingHelper {
                 var secondary = "";
 
                 try {
-                    var modelObj = MyModel.SelectModelObject(dp.DrawingPart.ModelIdentifier);
-                    if (modelObj is TSM.Part modelPart) {
+                    var modelObject = MyModel.SelectModelObject(dp.DrawingPart.ModelIdentifier);
+                    if (modelObject is TSM.Part modelPart) {
                         name = string.IsNullOrWhiteSpace(modelPart.Name)
                             ? "(brak nazwy)"
                             : modelPart.Name.Trim();
@@ -80,7 +80,7 @@ namespace HFT_DrawingHelper {
                 ));
 
             PartItemsList.ItemsSource = _partGroups;
-            SidePanelBorder.Visibility = Visibility.Visible;
+            SetSidePanelMode(SidePanelMode.Parts);
         }
 
         private void GroupCheckBox_Click(object sender, RoutedEventArgs e) {
@@ -165,7 +165,6 @@ namespace HFT_DrawingHelper {
             if (!drawingHandler.GetConnectionStatus()) return;
 
             var selector = drawingHandler.GetDrawingObjectSelector();
-
             selector?.UnselectAllObjects();
         }
 
@@ -179,8 +178,7 @@ namespace HFT_DrawingHelper {
                 group.SetCheckedForAll(false);
         }
 
-        private void CloseSidePanelButton_Click(object sender, RoutedEventArgs e) {
-            SidePanelBorder.Visibility = Visibility.Collapsed;
+        private void ResetPartSelectionPanelState() {
             _overrideSelectedParts = null;
             ClearPreviewSelection();
             ClearDrawingSelectionInEditor();

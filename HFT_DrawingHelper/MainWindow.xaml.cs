@@ -279,8 +279,8 @@ namespace HFT_DrawingHelper {
         }
 
         private void ClearAllEdgePreviews() {
-            foreach (var previewGroup in _edgePreviewObjectsByGroupNumber.Values)
-            foreach (var drawingObject in previewGroup)
+            foreach (var drawingObject in _edgePreviewObjectsByGroupNumber.Values.SelectMany(previewGroup =>
+                         previewGroup))
                 try {
                     drawingObject?.Delete();
                 }
@@ -398,9 +398,11 @@ namespace HFT_DrawingHelper {
         }
 
         private List<DimensionOptions> BuildDimensionOptionsFromUi() {
-            var dimensionType = CurvedDimensionRadioButton.IsChecked == true
-                ? DimensionType.Curved
-                : DimensionType.Straight;
+            var dimensionType = AngledDimensionRadioButton.IsChecked == true
+                ? DimensionType.Angled
+                : CurvedDimensionRadioButton.IsChecked == true
+                    ? DimensionType.Curved
+                    : DimensionType.Straight;
 
             var horizontalScope = HorizontalTotalDimensionCheckBox.IsChecked == true
                 ? DimensionScope.Overall
@@ -410,6 +412,8 @@ namespace HFT_DrawingHelper {
                 ? DimensionScope.Overall
                 : DimensionScope.PerElement;
 
+            var useShortExtensionLine = ShortExtensionLineCheckBox.IsChecked == true;
+
             var optionsList = new List<DimensionOptions>();
 
             AddDimensionOptionIfChecked(
@@ -418,7 +422,8 @@ namespace HFT_DrawingHelper {
                 dimensionType,
                 DimensionAxis.Horizontal,
                 DimensionPlacement.Above,
-                horizontalScope
+                horizontalScope,
+                useShortExtensionLine
             );
 
             AddDimensionOptionIfChecked(
@@ -427,7 +432,8 @@ namespace HFT_DrawingHelper {
                 dimensionType,
                 DimensionAxis.Horizontal,
                 DimensionPlacement.Below,
-                horizontalScope
+                horizontalScope,
+                useShortExtensionLine
             );
 
             AddDimensionOptionIfChecked(
@@ -436,7 +442,8 @@ namespace HFT_DrawingHelper {
                 dimensionType,
                 DimensionAxis.Vertical,
                 DimensionPlacement.Right,
-                verticalScope
+                verticalScope,
+                useShortExtensionLine
             );
 
             AddDimensionOptionIfChecked(
@@ -445,7 +452,8 @@ namespace HFT_DrawingHelper {
                 dimensionType,
                 DimensionAxis.Vertical,
                 DimensionPlacement.Left,
-                verticalScope
+                verticalScope,
+                useShortExtensionLine
             );
 
             return optionsList;
@@ -469,7 +477,7 @@ namespace HFT_DrawingHelper {
                     : Visibility.Collapsed;
         }
 
-        private List<SelectableEdgeGroup> BuildSelectableEdgeGroups(TSD.DrawingHandler drawingHandler) {
+        private static List<SelectableEdgeGroup> BuildSelectableEdgeGroups(TSD.DrawingHandler drawingHandler) {
             var selectedDrawingParts = GetSelectedDrawingParts(drawingHandler);
             TSD.View targetView = null;
 
@@ -506,31 +514,24 @@ namespace HFT_DrawingHelper {
                 MinimumNumberedEdgeLengthMillimeters
             );
 
-            var result = new List<SelectableEdgeGroup>();
-
-            foreach (var pair in groupedEdges.OrderBy(item => item.Key)) {
-                var group = pair.Value;
-                if (group == null) continue;
-
-                var segmentCount = group.IsPolyline
-                    ? group.EdgeSegments.Count
-                    : 1;
-
-                var length = Math.Round(ComputeGroupLength(group), 0);
-                var typeLabel = group.IsPolyline ? "łamana" : "prosta";
-
-                result.Add(new SelectableEdgeGroup {
-                    GroupNumber = group.GroupNumber,
-                    DisplayName = "Krawędź " + group.GroupNumber,
+            return (from pair in groupedEdges.OrderBy(item => item.Key)
+                select pair.Value
+                into @group
+                where @group != null
+                let segmentCount = @group.IsPolyline
+                    ? @group.EdgeSegments.Count
+                    : 1
+                let length = Math.Round(ComputeGroupLength(@group), 0)
+                let typeLabel = @group.IsPolyline ? "łamana" : "prosta"
+                select new SelectableEdgeGroup {
+                    GroupNumber = @group.GroupNumber,
+                    DisplayName = "Krawędź " + @group.GroupNumber,
                     SecondaryInfo = typeLabel + ", odcinki: " + segmentCount + ", długość: " + length + " mm",
-                    EdgeGroup = group,
+                    EdgeGroup = @group,
                     TargetView = targetView,
                     IsChecked = false,
                     IsPreviewVisible = false
-                });
-            }
-
-            return result;
+                }).ToList();
         }
 
         private static string FormatEdgeNumbersForInput(List<int> numbers) {
@@ -574,7 +575,8 @@ namespace HFT_DrawingHelper {
             DimensionType dimensionType,
             DimensionAxis axis,
             DimensionPlacement placement,
-            DimensionScope scope
+            DimensionScope scope,
+            bool useShortExtensionLine
         ) {
             if (!isChecked) return;
 
@@ -582,7 +584,8 @@ namespace HFT_DrawingHelper {
                 DimensionType = dimensionType,
                 Axis = axis,
                 Placement = placement,
-                Scope = scope
+                Scope = scope,
+                UseShortExtensionLine = useShortExtensionLine
             });
         }
 

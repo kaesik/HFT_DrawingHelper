@@ -170,6 +170,7 @@
                     <Grid Grid.Column="1">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="110" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
@@ -179,8 +180,14 @@
                                      GroupName="DimType"
                                      IsChecked="True" />
 
-                        <RadioButton x:Name="CurvedDimensionRadioButton"
+                        <RadioButton x:Name="AngledDimensionRadioButton"
                                      Grid.Column="1"
+                                     Content="Pod kątem"
+                                     Style="{StaticResource HftRadioButton}"
+                                     GroupName="DimType" />
+
+                        <RadioButton x:Name="CurvedDimensionRadioButton"
+                                     Grid.Column="2"
                                      Content="Łukowy"
                                      Style="{StaticResource HftRadioButton}"
                                      GroupName="DimType" />
@@ -222,7 +229,7 @@
                               VerticalAlignment="Center" />
                 </Grid>
 
-                <Grid Margin="0,0,0,10">
+                <Grid Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="90" />
                         <ColumnDefinition Width="110" />
@@ -255,6 +262,27 @@
                               Style="{StaticResource HftCheckBox}"
                               IsChecked="True"
                               VerticalAlignment="Center" />
+                </Grid>
+
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="110" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0"
+                               Text="Linia"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               FontSize="11"
+                               VerticalAlignment="Center" />
+
+                    <CheckBox x:Name="ShortExtensionLineCheckBox"
+                              Grid.Column="1"
+                              Content="Krótka"
+                              Style="{StaticResource HftCheckBox}"
+                              VerticalAlignment="Center"
+                              ToolTip="Ukrywa linie pomocnicze wymiaru." />
                 </Grid>
 
                 <Button x:Name="AddDimensionsButton"

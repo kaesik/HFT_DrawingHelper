@@ -57,7 +57,9 @@ namespace HFT_DrawingHelper {
                     AllPartsBounds = allPartsBounds,
                     SelectedBounds = allPartsBounds,
                     Endpoints = mergedEndpointsFromView,
-                    ElementEndpoints = elementEndpointsFromView
+                    AllEndpoints = mergedEndpointsFromView,
+                    ElementEndpoints = elementEndpointsFromView,
+                    AllElementEndpoints = elementEndpointsFromView
                 };
             }
 
@@ -83,6 +85,34 @@ namespace HFT_DrawingHelper {
 
             if (selectedBounds == null) return null;
 
+            var drawingPartsFromViewForOverall = GetDrawingPartsFromView(selectedViewFromParts);
+            if (drawingPartsFromViewForOverall == null || drawingPartsFromViewForOverall.Count == 0) return null;
+
+            var allOutlineSnapshotsFromView =
+                GetPartOutlineSnapshots(selectedViewFromParts, drawingPartsFromViewForOverall);
+            if (allOutlineSnapshotsFromView == null || allOutlineSnapshotsFromView.Count == 0) return null;
+
+            var allElementEndpointsFromView = allOutlineSnapshotsFromView
+                .Where(snapshot => snapshot?.Vertices != null && snapshot.Vertices.Count > 0)
+                .Select(snapshot => new ElementEndpointsSnapshot {
+                    Bounds = snapshot.Bounds,
+                    Endpoints = snapshot.Vertices
+                        .Select(point => new TSG.Point(point.X, point.Y, 0))
+                        .ToList()
+                })
+                .ToList();
+
+            var allMergedEndpointsFromView = allElementEndpointsFromView
+                .Where(element => element?.Endpoints != null)
+                .SelectMany(element => element.Endpoints)
+                .ToList();
+
+            allMergedEndpointsFromView.AddRange(GetLineAndPolylineEndpoints(selectedViewFromParts));
+            allMergedEndpointsFromView = RemoveDuplicatePointsByDistance(
+                allMergedEndpointsFromView,
+                DimensionMergeToleranceMillimeters
+            );
+
             var elementEndpoints = outlineSnapshots
                 .Where(snapshot => snapshot?.Vertices != null && snapshot.Vertices.Count > 0)
                 .Select(snapshot => new ElementEndpointsSnapshot {
@@ -98,12 +128,19 @@ namespace HFT_DrawingHelper {
                 .SelectMany(element => element.Endpoints)
                 .ToList();
 
+            mergedEndpoints = RemoveDuplicatePointsByDistance(
+                mergedEndpoints,
+                DimensionMergeToleranceMillimeters
+            );
+
             return new DimensionGeometrySnapshot {
                 View = selectedViewFromParts,
                 AllPartsBounds = allPartsBoundsFromParts,
                 SelectedBounds = selectedBounds,
                 Endpoints = mergedEndpoints,
-                ElementEndpoints = elementEndpoints
+                AllEndpoints = allMergedEndpointsFromView,
+                ElementEndpoints = elementEndpoints,
+                AllElementEndpoints = allElementEndpointsFromView
             };
         }
 
@@ -113,26 +150,8 @@ namespace HFT_DrawingHelper {
 
         private static void AddDimensions(List<DimensionOptions> optionsList) {
             try {
-                var validOptions = optionsList?
-                    .Where(option =>
-                        option != null &&
-                        (
-                            option.IsCurved ||
-                            option.IsAngled ||
-                            (
-                                option.Axis == DimensionAxis.Horizontal &&
-                                (option.Placement == DimensionPlacement.Above ||
-                                 option.Placement == DimensionPlacement.Below)
-                            ) ||
-                            (
-                                option.Axis == DimensionAxis.Vertical &&
-                                (option.Placement == DimensionPlacement.Left ||
-                                 option.Placement == DimensionPlacement.Right)
-                            )
-                        ))
-                    .ToList();
-
-                if (validOptions == null || validOptions.Count == 0)
+                var validOptions = GetValidDimensionOptions(optionsList);
+                if (validOptions.Count == 0)
                     return;
 
                 var drawingHandler = new TSD.DrawingHandler();
@@ -143,86 +162,139 @@ namespace HFT_DrawingHelper {
                 if (activeDrawing == null)
                     return;
 
-                foreach (var option in validOptions.Where(option => option.IsCurved))
-                    if (!PickCurvedArcPoints(drawingHandler, option))
-                        return;
-
-                var firstAngledOption = validOptions.FirstOrDefault(option => option.IsAngled);
-                if (firstAngledOption != null) {
-                    if (!PickAngledVectorPoints(drawingHandler, firstAngledOption))
-                        return;
-
-                    foreach (var angledOption in validOptions.Where(option =>
-                                 option.IsAngled && !ReferenceEquals(option, firstAngledOption))) {
-                        angledOption.UserVectorStart = new TSG.Point(
-                            firstAngledOption.UserVectorStart.X,
-                            firstAngledOption.UserVectorStart.Y,
-                            0
-                        );
-                        angledOption.UserVectorEnd = new TSG.Point(
-                            firstAngledOption.UserVectorEnd.X,
-                            firstAngledOption.UserVectorEnd.Y,
-                            0
-                        );
-                    }
-                }
+                if (!PrepareDimensionInputs(drawingHandler, validOptions))
+                    return;
 
                 var snapshot = BuildDimensionGeometrySnapshot(drawingHandler);
                 if (snapshot?.View == null || snapshot.AllPartsBounds == null || snapshot.SelectedBounds == null)
                     return;
 
-                foreach (var option in validOptions) {
-                    if (option.IsCurved) {
-                        if (option.IsOverall) {
-                            var curvedPoints = GetCurvedDimensionReferencePoints(
-                                snapshot,
-                                option,
-                                option.IsHorizontal
-                                    ? CurvedSideSelectionMode.Horizontal
-                                    : CurvedSideSelectionMode.Vertical
-                            );
-
-                            if (curvedPoints.Count >= 2)
-                                CreateCurvedDimensionSet(
-                                    snapshot.View,
-                                    curvedPoints,
-                                    option,
-                                    FarDimensionOffsetMillimeters
-                                );
-                        }
-                        else
-                            foreach (var curvedPoints in snapshot.ElementEndpoints
-                                         .Select(element => GetCurvedDimensionReferencePoints(
-                                             snapshot,
-                                             option,
-                                             option.IsHorizontal
-                                                 ? CurvedSideSelectionMode.Horizontal
-                                                 : CurvedSideSelectionMode.Vertical,
-                                             element
-                                         ))
-                                         .Where(curvedPoints => curvedPoints.Count >= 2))
-                                CreateCurvedDimensionSet(
-                                    snapshot.View,
-                                    curvedPoints,
-                                    option,
-                                    PerElementDimensionOffsetMillimeters
-                                );
-
-                        continue;
-                    }
-
-                    if (option.IsAngled) {
-                        CreateAngledDimensions(snapshot, option);
-                        continue;
-                    }
-
-                    CreateStraightDimensions(snapshot, option);
-                }
+                foreach (var option in validOptions)
+                    CreateDimensions(snapshot, option);
 
                 activeDrawing.CommitChanges();
             }
             catch {
                 // ignored
+            }
+        }
+
+        private static List<DimensionOptions> GetValidDimensionOptions(IEnumerable<DimensionOptions> optionsList) {
+            return optionsList?
+                .Where(IsValidDimensionOption)
+                .ToList() ?? new List<DimensionOptions>();
+        }
+
+        private static bool IsValidDimensionOption(DimensionOptions option) {
+            if (option == null)
+                return false;
+
+            if (option.IsCurved || option.IsAngled)
+                return true;
+
+            if (option.Axis == DimensionAxis.Horizontal)
+                return option.Placement == DimensionPlacement.Above ||
+                       option.Placement == DimensionPlacement.Below;
+
+            return option.Placement == DimensionPlacement.Left ||
+                   option.Placement == DimensionPlacement.Right;
+        }
+
+        private static bool PrepareDimensionInputs(
+            TSD.DrawingHandler drawingHandler,
+            List<DimensionOptions> options
+        ) {
+            foreach (var option in options.Where(option => option.IsCurved))
+                if (!PickCurvedArcPoints(drawingHandler, option))
+                    return false;
+
+            var firstAngledOption = options.FirstOrDefault(option => option.IsAngled);
+            if (firstAngledOption == null)
+                return true;
+
+            if (!PickAngledVectorPoints(drawingHandler, firstAngledOption))
+                return false;
+
+            foreach (var angledOption in options.Where(option =>
+                         option.IsAngled && !ReferenceEquals(option, firstAngledOption))) {
+                angledOption.UserVectorStart = new TSG.Point(
+                    firstAngledOption.UserVectorStart.X,
+                    firstAngledOption.UserVectorStart.Y,
+                    0
+                );
+                angledOption.UserVectorEnd = new TSG.Point(
+                    firstAngledOption.UserVectorEnd.X,
+                    firstAngledOption.UserVectorEnd.Y,
+                    0
+                );
+            }
+
+            return true;
+        }
+
+        private static void CreateDimensions(
+            DimensionGeometrySnapshot snapshot,
+            DimensionOptions options
+        ) {
+            if (options.IsCurved) {
+                CreateCurvedDimensions(snapshot, options);
+                return;
+            }
+
+            if (options.IsAngled) {
+                CreateAngledDimensions(snapshot, options);
+                return;
+            }
+
+            CreateStraightDimensions(snapshot, options);
+        }
+
+        private static void CreateCurvedDimensions(
+            DimensionGeometrySnapshot snapshot,
+            DimensionOptions options
+        ) {
+            if (snapshot?.View == null || options == null || !options.HasUserArcPoints)
+                return;
+
+            var curvedSideSelectionMode = options.IsHorizontal
+                ? CurvedSideSelectionMode.Horizontal
+                : CurvedSideSelectionMode.Vertical;
+
+            if (options.IsOverall) {
+                var curvedPoints = GetCurvedDimensionReferencePoints(
+                    snapshot,
+                    options,
+                    curvedSideSelectionMode
+                );
+
+                if (curvedPoints.Count >= 2)
+                    CreateCurvedDimensionSet(
+                        snapshot.View,
+                        curvedPoints,
+                        options,
+                        FarDimensionOffsetMillimeters
+                    );
+
+                return;
+            }
+
+            foreach (var element in snapshot.ElementEndpoints.Where(HasEndpoints)) {
+                var curvedPoints = GetCurvedDimensionReferencePoints(
+                    snapshot,
+                    options,
+                    curvedSideSelectionMode,
+                    element
+                );
+
+                if (curvedPoints.Count < 2)
+                    continue;
+
+                CreateCurvedDimensionSet(
+                    snapshot.View,
+                    curvedPoints,
+                    options,
+                    PerElementDimensionOffsetMillimeters
+                );
             }
         }
 
@@ -233,6 +305,22 @@ namespace HFT_DrawingHelper {
         private enum CurvedSideSelectionMode {
             Horizontal,
             Vertical
+        }
+
+        private static bool HasEndpoints(ElementEndpointsSnapshot element) {
+            return element?.Endpoints != null && element.Endpoints.Count > 0;
+        }
+
+        private static IEnumerable<ElementEndpointsSnapshot> GetTargetElements(
+            DimensionGeometrySnapshot snapshot,
+            DimensionOptions options
+        ) {
+            if (snapshot?.ElementEndpoints == null || snapshot.ElementEndpoints.Count == 0)
+                return Enumerable.Empty<ElementEndpointsSnapshot>();
+
+            return options.IsOverall
+                ? new ElementEndpointsSnapshot[] { null }
+                : snapshot.ElementEndpoints.Where(HasEndpoints);
         }
 
         private static PartBounds GetElementLocalBounds(ElementEndpointsSnapshot element) {
@@ -251,48 +339,151 @@ namespace HFT_DrawingHelper {
             };
         }
 
+        private static List<Tuple<TSG.Point, TSG.Point>> GetClosedOutlineSegments(
+            IEnumerable<TSG.Point> points
+        ) {
+            var result = new List<Tuple<TSG.Point, TSG.Point>>();
+            var vertices = points?
+                .Where(p => p != null)
+                .Select(p => new TSG.Point(p.X, p.Y, 0))
+                .ToList() ?? new List<TSG.Point>();
+
+            if (vertices.Count < 2)
+                return result;
+
+            for (var i = 0; i < vertices.Count - 1; i++)
+                result.Add(Tuple.Create(vertices[i], vertices[i + 1]));
+
+            if (vertices.Count > 2 && !ArePointsClose2D(vertices[0], vertices[vertices.Count - 1]))
+                result.Add(Tuple.Create(vertices[vertices.Count - 1], vertices[0]));
+
+            return result;
+        }
+
+        private static TSG.Point InterpolatePointOnSegment(
+            TSG.Point startPoint,
+            TSG.Point endPoint,
+            double parameter
+        ) {
+            return new TSG.Point(
+                startPoint.X + (endPoint.X - startPoint.X) * parameter,
+                startPoint.Y + (endPoint.Y - startPoint.Y) * parameter,
+                0
+            );
+        }
+
+        private static List<TSG.Point> GetStraightBoundaryPointsAtTargetAxis(
+            IEnumerable<ElementEndpointsSnapshot> elements,
+            double targetAxisValue,
+            bool isHorizontal
+        ) {
+            var result = new List<TSG.Point>();
+            if (elements == null)
+                return result;
+
+            foreach (var element in elements.Where(HasEndpoints))
+            foreach (var segment in GetClosedOutlineSegments(element.Endpoints)) {
+                var s = segment.Item1;
+                var e2 = segment.Item2;
+
+                var sAxis = isHorizontal ? s.X : s.Y;
+                var eAxis = isHorizontal ? e2.X : e2.Y;
+
+                if (Math.Abs(sAxis - targetAxisValue) <= DimensionMergeToleranceMillimeters &&
+                    Math.Abs(eAxis - targetAxisValue) <= DimensionMergeToleranceMillimeters) {
+                    result.Add(new TSG.Point(s.X, s.Y, 0));
+                    result.Add(new TSG.Point(e2.X, e2.Y, 0));
+                    continue;
+                }
+
+                var minAxis = Math.Min(sAxis, eAxis);
+                var maxAxis = Math.Max(sAxis, eAxis);
+                if (targetAxisValue < minAxis - DimensionMergeToleranceMillimeters ||
+                    targetAxisValue > maxAxis + DimensionMergeToleranceMillimeters)
+                    continue;
+
+                var axisDelta = eAxis - sAxis;
+                if (Math.Abs(axisDelta) <= DimensionMergeToleranceMillimeters)
+                    continue;
+
+                var t = Math.Max(0.0, Math.Min(1.0, (targetAxisValue - sAxis) / axisDelta));
+                result.Add(InterpolatePointOnSegment(s, e2, t));
+            }
+
+            return RemoveDuplicatePointsByDistance(result, DimensionMergeToleranceMillimeters);
+        }
+
+        private static TSG.Point SelectClosestStraightActualPointForTarget(
+            IEnumerable<TSG.Point> candidates,
+            double targetAxisValue,
+            DimensionOptions options
+        ) {
+            var validPoints = candidates?
+                .Where(p => p != null)
+                .Select(p => new TSG.Point(p.X, p.Y, 0))
+                .ToList() ?? new List<TSG.Point>();
+
+            if (validPoints.Count == 0 || options == null)
+                return null;
+
+            var axisSelector = options.IsHorizontal
+                ? (Func<TSG.Point, double>)(p => p.X)
+                : p => p.Y;
+
+            var minDelta = validPoints.Min(p => Math.Abs(axisSelector(p) - targetAxisValue));
+
+            var bucket = validPoints
+                .Where(p => Math.Abs(axisSelector(p) - targetAxisValue) <=
+                            minDelta + DimensionMergeToleranceMillimeters)
+                .ToList();
+
+            return SelectBestStraightReferencePoint(bucket, options);
+        }
+
         private static List<TSG.Point> GetStraightOverallStartAndEndPoints(
             DimensionGeometrySnapshot snapshot,
             DimensionOptions options
         ) {
-            var candidates = GetAssemblyCornerCandidates(snapshot?.AllPartsBounds);
-            if (candidates.Count == 0 || options == null)
+            if (snapshot == null || options == null ||
+                snapshot.AllPartsBounds == null || snapshot.AllElementEndpoints == null)
                 return new List<TSG.Point>();
+
+            var bounds = snapshot.AllPartsBounds;
 
             TSG.Point startPoint;
             TSG.Point endPoint;
 
             if (options.IsHorizontal) {
-                var minX = candidates.Min(point => point.X);
-                var maxX = candidates.Max(point => point.X);
+                var startIntersections = GetStraightBoundaryPointsAtTargetAxis(
+                    snapshot.AllElementEndpoints, bounds.MinX, true);
+                var endIntersections = GetStraightBoundaryPointsAtTargetAxis(
+                    snapshot.AllElementEndpoints, bounds.MaxX, true);
 
-                startPoint = SelectBestStraightReferencePoint(
-                    candidates.Where(point => Math.Abs(point.X - minX) <= DimensionMergeToleranceMillimeters),
-                    options
-                );
+                startPoint = startIntersections.Count > 0
+                    ? SelectBestStraightReferencePoint(startIntersections, options)
+                    : SelectClosestStraightActualPointForTarget(snapshot.AllEndpoints, bounds.MinX, options);
 
-                endPoint = SelectBestStraightReferencePoint(
-                    candidates.Where(point => Math.Abs(point.X - maxX) <= DimensionMergeToleranceMillimeters),
-                    options
-                );
+                endPoint = endIntersections.Count > 0
+                    ? SelectBestStraightReferencePoint(endIntersections, options)
+                    : SelectClosestStraightActualPointForTarget(snapshot.AllEndpoints, bounds.MaxX, options);
             }
             else {
-                var minY = candidates.Min(point => point.Y);
-                var maxY = candidates.Max(point => point.Y);
+                var startIntersections = GetStraightBoundaryPointsAtTargetAxis(
+                    snapshot.AllElementEndpoints, bounds.MinY, false);
+                var endIntersections = GetStraightBoundaryPointsAtTargetAxis(
+                    snapshot.AllElementEndpoints, bounds.MaxY, false);
 
-                startPoint = SelectBestStraightReferencePoint(
-                    candidates.Where(point => Math.Abs(point.Y - minY) <= DimensionMergeToleranceMillimeters),
-                    options
-                );
+                startPoint = startIntersections.Count > 0
+                    ? SelectBestStraightReferencePoint(startIntersections, options)
+                    : SelectClosestStraightActualPointForTarget(snapshot.AllEndpoints, bounds.MinY, options);
 
-                endPoint = SelectBestStraightReferencePoint(
-                    candidates.Where(point => Math.Abs(point.Y - maxY) <= DimensionMergeToleranceMillimeters),
-                    options
-                );
+                endPoint = endIntersections.Count > 0
+                    ? SelectBestStraightReferencePoint(endIntersections, options)
+                    : SelectClosestStraightActualPointForTarget(snapshot.AllEndpoints, bounds.MaxY, options);
             }
 
             return RemoveDuplicatePointsByDistance(
-                new[] { startPoint, endPoint }.Where(point => point != null),
+                new[] { startPoint, endPoint }.Where(p => p != null),
                 DimensionMergeToleranceMillimeters
             );
         }
@@ -317,15 +508,12 @@ namespace HFT_DrawingHelper {
                 .ToList();
 
             candidates.AddRange(GetAssemblyCornerCandidates(snapshot.AllPartsBounds));
-            candidates = RemoveDuplicatePointsByDistance(
-                candidates,
-                DimensionMergeToleranceMillimeters
-            );
+            candidates = RemoveDuplicatePointsByDistance(candidates, DimensionMergeToleranceMillimeters);
 
             if (candidates.Count == 0)
                 return new List<TSG.Point>();
 
-            var projectedCandidates = candidates
+            var projected = candidates
                 .Select(point => new ProjectedPoint {
                     Point = point,
                     AxisValue = GetProjectedCoordinate(point, options.UserVectorStart, axisVector),
@@ -333,23 +521,23 @@ namespace HFT_DrawingHelper {
                 })
                 .ToList();
 
-            var minAxis = projectedCandidates.Min(item => item.AxisValue);
-            var maxAxis = projectedCandidates.Max(item => item.AxisValue);
+            var minAxis = projected.Min(item => item.AxisValue);
+            var maxAxis = projected.Max(item => item.AxisValue);
 
-            var startPoint = projectedCandidates
+            var startPoint = projected
                 .Where(item => Math.Abs(item.AxisValue - minAxis) <= DimensionMergeToleranceMillimeters)
                 .OrderByDescending(item => item.SideValue)
                 .Select(item => item.Point)
                 .FirstOrDefault();
 
-            var endPoint = projectedCandidates
+            var endPoint = projected
                 .Where(item => Math.Abs(item.AxisValue - maxAxis) <= DimensionMergeToleranceMillimeters)
                 .OrderByDescending(item => item.SideValue)
                 .Select(item => item.Point)
                 .FirstOrDefault();
 
             return RemoveDuplicatePointsByDistance(
-                new[] { startPoint, endPoint }.Where(point => point != null),
+                new[] { startPoint, endPoint }.Where(p => p != null),
                 DimensionMergeToleranceMillimeters
             );
         }
@@ -425,6 +613,54 @@ namespace HFT_DrawingHelper {
                     .First();
         }
 
+        private static List<TSG.Point> ReduceReferencePoints(
+            IEnumerable<TSG.Point> points,
+            Func<TSG.Point, double> axisSelector,
+            Func<List<TSG.Point>, TSG.Point> pointSelector
+        ) {
+            var validPoints = points?
+                .Where(point => point != null)
+                .Select(point => new TSG.Point(point.X, point.Y, 0))
+                .OrderBy(axisSelector)
+                .ToList() ?? new List<TSG.Point>();
+
+            if (validPoints.Count == 0)
+                return new List<TSG.Point>();
+
+            var reducedPoints = new List<TSG.Point>();
+            var bucket = new List<TSG.Point> { validPoints[0] };
+            var bucketStart = axisSelector(validPoints[0]);
+
+            for (var index = 1; index < validPoints.Count; index++) {
+                var currentAxisValue = axisSelector(validPoints[index]);
+
+                if (currentAxisValue - bucketStart <= DimensionMergeToleranceMillimeters) {
+                    bucket.Add(validPoints[index]);
+                    continue;
+                }
+
+                var selectedPoint = pointSelector(bucket);
+                if (selectedPoint != null)
+                    reducedPoints.Add(new TSG.Point(selectedPoint.X, selectedPoint.Y, 0));
+
+                bucket = new List<TSG.Point> { validPoints[index] };
+                bucketStart = currentAxisValue;
+            }
+
+            var lastSelectedPoint = pointSelector(bucket);
+            if (lastSelectedPoint != null)
+                reducedPoints.Add(new TSG.Point(lastSelectedPoint.X, lastSelectedPoint.Y, 0));
+
+            reducedPoints = RemoveDuplicatePointsByDistance(
+                reducedPoints,
+                DimensionMergeToleranceMillimeters
+            );
+
+            return reducedPoints
+                .OrderBy(axisSelector)
+                .ToList();
+        }
+
         private static List<TSG.Point> ReduceStraightReferencePoints(
             IEnumerable<TSG.Point> points,
             DimensionOptions options
@@ -443,42 +679,11 @@ namespace HFT_DrawingHelper {
             else
                 axisSelector = point => point.Y;
 
-            validPoints = validPoints
-                .OrderBy(axisSelector)
-                .ToList();
-
-            var reducedPoints = new List<TSG.Point>();
-            var bucket = new List<TSG.Point> { validPoints[0] };
-            var bucketStart = axisSelector(validPoints[0]);
-
-            for (var index = 1; index < validPoints.Count; index++) {
-                var currentAxisValue = axisSelector(validPoints[index]);
-
-                if (currentAxisValue - bucketStart <= DimensionMergeToleranceMillimeters) {
-                    bucket.Add(validPoints[index]);
-                    continue;
-                }
-
-                var selectedPoint = SelectBestStraightReferencePoint(bucket, options);
-                if (selectedPoint != null)
-                    reducedPoints.Add(new TSG.Point(selectedPoint.X, selectedPoint.Y, 0));
-
-                bucket = new List<TSG.Point> { validPoints[index] };
-                bucketStart = currentAxisValue;
-            }
-
-            var lastSelectedPoint = SelectBestStraightReferencePoint(bucket, options);
-            if (lastSelectedPoint != null)
-                reducedPoints.Add(new TSG.Point(lastSelectedPoint.X, lastSelectedPoint.Y, 0));
-
-            reducedPoints = RemoveDuplicatePointsByDistance(
-                reducedPoints,
-                DimensionMergeToleranceMillimeters
+            return ReduceReferencePoints(
+                validPoints,
+                axisSelector,
+                bucket => SelectBestStraightReferencePoint(bucket, options)
             );
-
-            return reducedPoints
-                .OrderBy(axisSelector)
-                .ToList();
         }
 
         private static List<TSG.Point> GetStraightDimensionReferencePoints(
@@ -495,18 +700,26 @@ namespace HFT_DrawingHelper {
                 var localBounds = GetElementLocalBounds(element);
                 points.AddRange(GetStraightSidePoints(element.Endpoints, localBounds, options));
             }
-            else {
-                foreach (var currentElement in snapshot.ElementEndpoints.Where(currentElement =>
-                             currentElement?.Endpoints != null)) {
+            else
+                foreach (var currentElement in snapshot.ElementEndpoints.Where(e => e?.Endpoints != null)) {
                     var currentBounds = GetElementLocalBounds(currentElement);
                     points.AddRange(GetStraightSidePoints(currentElement.Endpoints, currentBounds, options));
                 }
 
-                if (options.IsOverall)
-                    points.AddRange(GetStraightOverallStartAndEndPoints(snapshot, options));
-            }
+            var reducedPoints = ReduceStraightReferencePoints(points, options);
 
-            return ReduceStraightReferencePoints(points, options);
+            if (!options.IsOverall)
+                return reducedPoints;
+
+            var overallBoundaryPoints = GetStraightOverallStartAndEndPoints(snapshot, options);
+            reducedPoints.AddRange(overallBoundaryPoints);
+            reducedPoints = RemoveDuplicatePointsByDistance(reducedPoints, DimensionMergeToleranceMillimeters);
+
+            var axisSelector = options.IsHorizontal
+                ? (Func<TSG.Point, double>)(p => p.X)
+                : p => p.Y;
+
+            return reducedPoints.OrderBy(axisSelector).ToList();
         }
 
         private static double GetStraightDistanceFromReferencePoints(
@@ -782,16 +995,26 @@ namespace HFT_DrawingHelper {
 
             if (element != null)
                 points.AddRange(GetAngledSidePoints(element.Endpoints, options));
-            else {
-                foreach (var currentElement in snapshot.ElementEndpoints.Where(currentElement =>
-                             currentElement?.Endpoints != null))
+            else
+                foreach (var currentElement in snapshot.ElementEndpoints.Where(e => e?.Endpoints != null))
                     points.AddRange(GetAngledSidePoints(currentElement.Endpoints, options));
 
-                if (options.IsOverall)
-                    points.AddRange(GetAngledOverallStartAndEndPoints(snapshot, options));
-            }
+            var reducedPoints = ReduceAngledReferencePoints(points, options);
 
-            return ReduceAngledReferencePoints(points, options);
+            if (!options.IsOverall)
+                return reducedPoints;
+
+            var overallBoundaryPoints = GetAngledOverallStartAndEndPoints(snapshot, options);
+            reducedPoints.AddRange(overallBoundaryPoints);
+            reducedPoints = RemoveDuplicatePointsByDistance(reducedPoints, DimensionMergeToleranceMillimeters);
+
+            var axisVector = GetNormalizedPickedVector(options);
+            if (axisVector == null)
+                return reducedPoints;
+
+            return reducedPoints
+                .OrderBy(point => GetProjectedCoordinate(point, options.UserVectorStart, axisVector))
+                .ToList();
         }
 
         private static double GetAngledDistanceFromReferencePoints(
@@ -955,43 +1178,22 @@ namespace HFT_DrawingHelper {
             DimensionGeometrySnapshot snapshot,
             DimensionOptions options
         ) {
-            if (snapshot?.View == null || options == null) return;
-            if (snapshot.ElementEndpoints == null || snapshot.ElementEndpoints.Count == 0) return;
-
-            if (options.IsOverall) {
-                if (snapshot.AllPartsBounds == null) return;
-                if (GetDimensionSpan(snapshot.AllPartsBounds, options) < MinimumDimensionSpanMillimeters) return;
-
-                var referencePoints = GetStraightDimensionReferencePoints(snapshot, options);
-                if (referencePoints.Count < 2) return;
-
-                var dimensionPoints = CreateDimensionPointList(referencePoints);
-                var distance = GetStraightDistanceFromReferencePoints(
-                    referencePoints,
-                    options,
-                    GetOffset(options)
-                );
-
-                CreateDimensionSet(
-                    snapshot.View,
-                    dimensionPoints,
-                    GetDirectionVector(options),
-                    distance,
-                    options
-                );
-
+            if (snapshot?.View == null || options == null)
                 return;
-            }
+            if (snapshot.ElementEndpoints == null || snapshot.ElementEndpoints.Count == 0)
+                return;
 
-            foreach (var element in snapshot.ElementEndpoints) {
-                if (element?.Endpoints == null || element.Endpoints.Count == 0) continue;
+            foreach (var element in GetTargetElements(snapshot, options)) {
+                var bounds = options.IsOverall ? snapshot.AllPartsBounds : GetElementLocalBounds(element);
+                if (bounds == null)
+                    continue;
 
-                var localBounds = GetElementLocalBounds(element);
-                if (localBounds == null) continue;
-                if (GetDimensionSpan(localBounds, options) < MinimumDimensionSpanMillimeters) continue;
+                if (GetDimensionSpan(bounds, options) < MinimumDimensionSpanMillimeters)
+                    continue;
 
                 var referencePoints = GetStraightDimensionReferencePoints(snapshot, options, element);
-                if (referencePoints.Count < 2) continue;
+                if (referencePoints.Count < 2)
+                    continue;
 
                 var dimensionPoints = CreateDimensionPointList(referencePoints);
                 var distance = GetStraightDistanceFromReferencePoints(
@@ -1007,6 +1209,9 @@ namespace HFT_DrawingHelper {
                     distance,
                     options
                 );
+
+                if (options.IsOverall)
+                    return;
             }
         }
 
@@ -1272,7 +1477,9 @@ namespace HFT_DrawingHelper {
             public PartBounds AllPartsBounds { get; set; }
             public PartBounds SelectedBounds { get; set; }
             public List<TSG.Point> Endpoints { get; set; }
+            public List<TSG.Point> AllEndpoints { get; set; }
             public List<ElementEndpointsSnapshot> ElementEndpoints { get; set; }
+            public List<ElementEndpointsSnapshot> AllElementEndpoints { get; set; }
         }
 
         private sealed class ProjectedPoint {

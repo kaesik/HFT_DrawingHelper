@@ -4,6 +4,7 @@ using System.Linq;
 using TSD = Tekla.Structures.Drawing;
 using TSM = Tekla.Structures.Model;
 using TSG = Tekla.Structures.Geometry3d;
+using TSS = Tekla.Structures.Solid;
 
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
@@ -263,7 +264,17 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
+
         #region Shared Outline Extraction
+
+        private sealed class ProjectedFaceLoop {
+            public List<TSG.Point> Points { get; } = new List<TSG.Point>();
+        }
+
+        private sealed class ProjectedSegment2D {
+            public TSG.Point StartPoint { get; set; }
+            public TSG.Point EndPoint { get; set; }
+        }
 
         private static List<PartOutlineSnapshot> GetPartOutlineSnapshots(
             TSD.View view,
@@ -291,54 +302,40 @@ namespace HFT_DrawingHelper {
                     var bounds = GetPartAabbInViewSpace(view, modelPart);
                     if (bounds == null) continue;
 
-                    List<TSG.Point> outline;
+                    var boundaryPaths = GetProjectedBoundaryPathsFromSolid(solid);
+                    if (boundaryPaths == null || boundaryPaths.Count == 0)
+                        boundaryPaths = GetLegacyBoundaryPaths(modelPart, solid);
 
-                    if (ShouldUseSweepOutline(modelPart)) {
-                        var points = GetSweptPlateOutlinePoints(solid);
-                        if (points.Count < 2) continue;
-
-                        outline = BuildUpperLowerChainOutline(points);
-                        if (outline == null || outline.Count < 3) continue;
-
-                        outline = PrepareSegmentPath(outline);
-                        outline = EnsureClosedOutline(outline);
-
-                        if (outline == null || outline.Count < 4) continue;
-                    }
-                    else {
-                        var backZ = solid.MinimumPoint.Z;
-                        const double inward = 1.0;
-
-                        if (solid.MaximumPoint.Z - solid.MinimumPoint.Z > inward * 2)
-                            backZ += inward;
-                        else
-                            backZ = (solid.MinimumPoint.Z + solid.MaximumPoint.Z) * 0.5;
-
-                        var backPoints = GetIntersectionPointsAtLocalZ(solid, backZ);
-                        if (backPoints == null || backPoints.Count < 3) continue;
-
-                        backPoints = RemoveNearDuplicates(backPoints, DuplicateToleranceMillimeters);
-                        outline = BuildConvexHull2D(backPoints);
-
-                        if (outline == null || outline.Count < 3) continue;
-
-                        outline = PrepareSegmentPath(outline);
-                        outline = EnsureClosedOutline(outline);
-
-                        if (outline == null || outline.Count < 4) continue;
-                    }
-
-                    var vertices = GetOpenOutlineVertices(outline);
-                    if (vertices == null || vertices.Count < 2) continue;
+                    if (boundaryPaths == null || boundaryPaths.Count == 0) continue;
 
                     var snapshot = new PartOutlineSnapshot {
                         Bounds = bounds,
-                        Vertices = vertices.Select(point => new TSG.Point(point.X, point.Y, 0)).ToList()
+                        Vertices = new List<TSG.Point>()
                     };
 
-                    var segmentGroups = BuildOutlineSegmentGroups(vertices);
-                    foreach (var group in segmentGroups)
-                        snapshot.SegmentGroups.Add(group);
+                    foreach (var boundaryPath in boundaryPaths) {
+                        var preparedPath = PrepareBoundaryPath(boundaryPath);
+                        if (preparedPath == null || preparedPath.Count < 2) continue;
+
+                        var vertices = new List<TSG.Point>(preparedPath.Select(point =>
+                            new TSG.Point(point.X, point.Y, 0)
+                        ));
+
+                        if (snapshot.Vertices.Count == 0 ||
+                            ComputePolylineLength(vertices) > ComputePolylineLength(snapshot.Vertices))
+                            snapshot.Vertices = vertices.Select(point => new TSG.Point(point.X, point.Y, 0)).ToList();
+
+                        var segmentGroups = BuildOutlineSegmentGroups(vertices);
+                        foreach (var group in segmentGroups)
+                            snapshot.SegmentGroups.Add(group);
+                    }
+
+                    if (snapshot.SegmentGroups.Count == 0) continue;
+                    if (snapshot.Vertices == null || snapshot.Vertices.Count == 0)
+                        snapshot.Vertices = snapshot.SegmentGroups
+                            .SelectMany(group => group.Points)
+                            .Select(point => new TSG.Point(point.X, point.Y, 0))
+                            .ToList();
 
                     result.Add(snapshot);
                 }
@@ -348,6 +345,972 @@ namespace HFT_DrawingHelper {
             }
 
             return result;
+        }
+
+        private static List<List<TSG.Point>> GetProjectedBoundaryPathsFromSolid(TSM.Solid solid) {
+            var result = new List<List<TSG.Point>>();
+            if (solid == null) return result;
+
+            var faceLoops = GetProjectedFaceLoopsFromSolid(solid);
+            if (faceLoops.Count == 0) return result;
+
+            var projectedSegments = GetProjectedSegmentsFromSolid(solid);
+            if (projectedSegments.Count == 0) return result;
+
+            var splitSegments = SplitProjectedSegmentsAtIntersections(projectedSegments);
+            if (splitSegments.Count == 0) return result;
+
+            var boundarySegments = FilterBoundarySegments(splitSegments, faceLoops);
+            if (boundarySegments.Count == 0) return result;
+
+            boundarySegments = RemoveInteriorChordSegments(boundarySegments);
+            if (boundarySegments.Count == 0) return result;
+
+            var boundaryPaths = BuildBoundaryPathsFromSegments(boundarySegments);
+            foreach (var boundaryPath in boundaryPaths) {
+                var preparedPath = PrepareBoundaryPath(boundaryPath);
+                if (preparedPath != null && preparedPath.Count >= 2)
+                    result.Add(preparedPath);
+            }
+
+            return RemoveInteriorBoundaryPaths(result);
+        }
+
+        private static List<List<TSG.Point>> GetLegacyBoundaryPaths(TSM.Part modelPart, TSM.Solid solid) {
+            var result = new List<List<TSG.Point>>();
+            if (modelPart == null || solid == null) return result;
+
+            List<TSG.Point> outline = null;
+
+            if (ShouldUseSweepOutline(modelPart)) {
+                var points = GetSweptPlateOutlinePoints(solid);
+                if (points.Count >= 2)
+                    outline = BuildUpperLowerChainOutline(points);
+            }
+            else {
+                var backZ = solid.MinimumPoint.Z;
+                const double inward = 1.0;
+
+                if (solid.MaximumPoint.Z - solid.MinimumPoint.Z > inward * 2)
+                    backZ += inward;
+                else
+                    backZ = (solid.MinimumPoint.Z + solid.MaximumPoint.Z) * 0.5;
+
+                var backPoints = GetIntersectionPointsAtLocalZ(solid, backZ);
+                if (backPoints != null && backPoints.Count >= 3) {
+                    backPoints = RemoveNearDuplicates(backPoints, DuplicateToleranceMillimeters);
+                    outline = BuildConvexHull2D(backPoints);
+                }
+            }
+
+            if (outline == null || outline.Count < 3) return result;
+
+            outline = PrepareBoundaryPath(outline);
+            outline = EnsureClosedOutline(outline);
+
+            var vertices = GetOpenOutlineVertices(outline);
+            if (vertices != null && vertices.Count >= 2)
+                result.Add(vertices);
+
+            return result;
+        }
+
+        private static List<ProjectedFaceLoop> GetProjectedFaceLoopsFromSolid(TSM.Solid solid) {
+            var result = new List<ProjectedFaceLoop>();
+            if (solid == null) return result;
+
+            var faceEnumerator = solid.GetFaceEnumerator();
+            while (faceEnumerator.MoveNext()) {
+                if (!(faceEnumerator.Current is TSS.Face face)) continue;
+
+                var loopEnumerator = face.GetLoopEnumerator();
+                while (loopEnumerator.MoveNext()) {
+                    if (!(loopEnumerator.Current is TSS.Loop loop)) continue;
+
+                    var points = new List<TSG.Point>();
+                    var vertexEnumerator = loop.GetVertexEnumerator();
+
+                    while (vertexEnumerator.MoveNext())
+                        if (vertexEnumerator.Current is TSG.Point vertex)
+                            points.Add(new TSG.Point(vertex.X, vertex.Y, 0));
+
+                    points = RemoveSequentialDuplicatePoints(points);
+                    if (points.Count < 3) continue;
+
+                    if (!ArePointsEqual(points[0], points[points.Count - 1]))
+                        points.Add(new TSG.Point(points[0].X, points[0].Y, 0));
+
+                    if (Math.Abs(ComputeSignedArea(points)) <=
+                        DuplicateToleranceMillimeters * DuplicateToleranceMillimeters)
+                        continue;
+
+                    var faceLoop = new ProjectedFaceLoop();
+                    foreach (var point in points)
+                        faceLoop.Points.Add(new TSG.Point(point.X, point.Y, 0));
+
+                    result.Add(faceLoop);
+                }
+            }
+
+            return result;
+        }
+
+        private static List<ProjectedSegment2D> GetProjectedSegmentsFromSolid(TSM.Solid solid) {
+            var result = new List<ProjectedSegment2D>();
+            if (solid == null) return result;
+
+            var seenKeys = new HashSet<string>();
+
+            var faceEnumerator = solid.GetFaceEnumerator();
+            while (faceEnumerator.MoveNext()) {
+                if (!(faceEnumerator.Current is TSS.Face face)) continue;
+
+                var loopEnumerator = face.GetLoopEnumerator();
+                while (loopEnumerator.MoveNext()) {
+                    if (!(loopEnumerator.Current is TSS.Loop loop)) continue;
+
+                    var vertices = new List<TSG.Point>();
+                    var vertexEnumerator = loop.GetVertexEnumerator();
+
+                    while (vertexEnumerator.MoveNext())
+                        if (vertexEnumerator.Current is TSG.Point vertex)
+                            vertices.Add(new TSG.Point(vertex.X, vertex.Y, 0));
+
+                    vertices = RemoveSequentialDuplicatePoints(vertices);
+                    if (vertices.Count < 2) continue;
+
+                    for (var index = 0; index < vertices.Count; index++) {
+                        var startPoint = vertices[index];
+                        var endPoint = vertices[(index + 1) % vertices.Count];
+
+                        if (ComputeDistance2D(startPoint, endPoint) <= DuplicateToleranceMillimeters)
+                            continue;
+
+                        var normalizedStartPoint = startPoint;
+                        var normalizedEndPoint = endPoint;
+
+                        if (ComparePointsLexicographically(normalizedStartPoint, normalizedEndPoint) > 0) {
+                            normalizedStartPoint = endPoint;
+                            normalizedEndPoint = startPoint;
+                        }
+
+                        var key = BuildSegmentKey(normalizedStartPoint, normalizedEndPoint);
+                        if (!seenKeys.Add(key)) continue;
+
+                        result.Add(new ProjectedSegment2D {
+                            StartPoint = new TSG.Point(normalizedStartPoint.X, normalizedStartPoint.Y, 0),
+                            EndPoint = new TSG.Point(normalizedEndPoint.X, normalizedEndPoint.Y, 0)
+                        });
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static List<ProjectedSegment2D> SplitProjectedSegmentsAtIntersections(
+            List<ProjectedSegment2D> projectedSegments
+        ) {
+            var result = new List<ProjectedSegment2D>();
+            if (projectedSegments == null || projectedSegments.Count == 0) return result;
+
+            var uniqueKeys = new HashSet<string>();
+
+            for (var index = 0; index < projectedSegments.Count; index++) {
+                var currentSegment = projectedSegments[index];
+                var splitPoints = new List<TSG.Point> {
+                    currentSegment.StartPoint,
+                    currentSegment.EndPoint
+                };
+
+                for (var otherIndex = 0; otherIndex < projectedSegments.Count; otherIndex++) {
+                    if (index == otherIndex) continue;
+
+                    var otherSegment = projectedSegments[otherIndex];
+                    AddSegmentIntersections(currentSegment, otherSegment, splitPoints);
+                }
+
+                splitPoints = RemoveNearDuplicates(splitPoints, DuplicateToleranceMillimeters);
+                splitPoints = splitPoints
+                    .OrderBy(point =>
+                        GetPointParameterOnSegment(point, currentSegment.StartPoint, currentSegment.EndPoint))
+                    .ToList();
+
+                for (var pointIndex = 0; pointIndex < splitPoints.Count - 1; pointIndex++) {
+                    var startPoint = splitPoints[pointIndex];
+                    var endPoint = splitPoints[pointIndex + 1];
+
+                    if (ComputeDistance2D(startPoint, endPoint) <= DuplicateToleranceMillimeters)
+                        continue;
+
+                    var normalizedStartPoint = startPoint;
+                    var normalizedEndPoint = endPoint;
+
+                    if (ComparePointsLexicographically(normalizedStartPoint, normalizedEndPoint) > 0) {
+                        normalizedStartPoint = endPoint;
+                        normalizedEndPoint = startPoint;
+                    }
+
+                    var key = BuildSegmentKey(normalizedStartPoint, normalizedEndPoint);
+                    if (!uniqueKeys.Add(key)) continue;
+
+                    result.Add(new ProjectedSegment2D {
+                        StartPoint = new TSG.Point(normalizedStartPoint.X, normalizedStartPoint.Y, 0),
+                        EndPoint = new TSG.Point(normalizedEndPoint.X, normalizedEndPoint.Y, 0)
+                    });
+                }
+            }
+
+            return result;
+        }
+
+        private static void AddSegmentIntersections(
+            ProjectedSegment2D firstSegment,
+            ProjectedSegment2D secondSegment,
+            List<TSG.Point> splitPoints
+        ) {
+            if (firstSegment == null || secondSegment == null || splitPoints == null) return;
+
+            if (TryGetSegmentIntersectionPoint(firstSegment.StartPoint, firstSegment.EndPoint,
+                    secondSegment.StartPoint, secondSegment.EndPoint, out var intersectionPoint)) {
+                splitPoints.Add(intersectionPoint);
+                return;
+            }
+
+            if (!AreSegmentsCollinear(firstSegment.StartPoint, firstSegment.EndPoint,
+                    secondSegment.StartPoint, secondSegment.EndPoint))
+                return;
+
+            if (IsPointOnSegment(firstSegment.StartPoint, secondSegment.StartPoint, secondSegment.EndPoint))
+                splitPoints.Add(firstSegment.StartPoint);
+            if (IsPointOnSegment(firstSegment.EndPoint, secondSegment.StartPoint, secondSegment.EndPoint))
+                splitPoints.Add(firstSegment.EndPoint);
+            if (IsPointOnSegment(secondSegment.StartPoint, firstSegment.StartPoint, firstSegment.EndPoint))
+                splitPoints.Add(secondSegment.StartPoint);
+            if (IsPointOnSegment(secondSegment.EndPoint, firstSegment.StartPoint, firstSegment.EndPoint))
+                splitPoints.Add(secondSegment.EndPoint);
+        }
+
+        private static List<ProjectedSegment2D> FilterBoundarySegments(
+            List<ProjectedSegment2D> splitSegments,
+            List<ProjectedFaceLoop> faceLoops
+        ) {
+            var result = new List<ProjectedSegment2D>();
+            if (splitSegments == null || faceLoops == null) return result;
+
+            foreach (var splitSegment in splitSegments) {
+                var segmentLength = ComputeDistance2D(splitSegment.StartPoint, splitSegment.EndPoint);
+                if (segmentLength <= DuplicateToleranceMillimeters) continue;
+
+                var midpoint = new TSG.Point(
+                    (splitSegment.StartPoint.X + splitSegment.EndPoint.X) * 0.5,
+                    (splitSegment.StartPoint.Y + splitSegment.EndPoint.Y) * 0.5,
+                    0
+                );
+
+                var directionX = splitSegment.EndPoint.X - splitSegment.StartPoint.X;
+                var directionY = splitSegment.EndPoint.Y - splitSegment.StartPoint.Y;
+                var directionLength = Math.Sqrt(directionX * directionX + directionY * directionY);
+
+                if (directionLength < 1e-9) continue;
+
+                var normalX = -directionY / directionLength;
+                var normalY = directionX / directionLength;
+                var offset = Math.Max(0.25, Math.Min(1.0, segmentLength * 0.1));
+
+                var pointOnLeftSide = new TSG.Point(
+                    midpoint.X + normalX * offset,
+                    midpoint.Y + normalY * offset,
+                    0
+                );
+
+                var pointOnRightSide = new TSG.Point(
+                    midpoint.X - normalX * offset,
+                    midpoint.Y - normalY * offset,
+                    0
+                );
+
+                var leftInside = IsPointInsideProjectedSolid(pointOnLeftSide, faceLoops);
+                var rightInside = IsPointInsideProjectedSolid(pointOnRightSide, faceLoops);
+
+                if (leftInside == rightInside) continue;
+
+                result.Add(new ProjectedSegment2D {
+                    StartPoint = new TSG.Point(splitSegment.StartPoint.X, splitSegment.StartPoint.Y, 0),
+                    EndPoint = new TSG.Point(splitSegment.EndPoint.X, splitSegment.EndPoint.Y, 0)
+                });
+            }
+
+            return result;
+        }
+
+        private static bool IsPointInsideProjectedSolid(TSG.Point point, List<ProjectedFaceLoop> faceLoops) {
+            if (point == null || faceLoops == null || faceLoops.Count == 0) return false;
+
+            foreach (var faceLoop in faceLoops) {
+                if (faceLoop?.Points == null || faceLoop.Points.Count < 3) continue;
+                if (IsPointInsidePolygon(point, faceLoop.Points)) return true;
+            }
+
+            return false;
+        }
+
+
+        private static List<ProjectedSegment2D> RemoveInteriorChordSegments(List<ProjectedSegment2D> boundarySegments) {
+            var result = new List<ProjectedSegment2D>();
+            if (boundarySegments == null || boundarySegments.Count == 0) return result;
+
+            var allPoints = boundarySegments
+                .SelectMany(segment => new[] { segment.StartPoint, segment.EndPoint })
+                .Where(point => point != null)
+                .Select(point => new TSG.Point(point.X, point.Y, 0))
+                .ToList();
+
+            var bounds = GetBoundsFromPoints(allPoints);
+            if (bounds == null) return boundarySegments;
+
+            var width = bounds.MaxX - bounds.MinX;
+            var height = bounds.MaxY - bounds.MinY;
+
+            if (width < MinimumPartSizeForDimensionMillimeters || height < DuplicateToleranceMillimeters * 2.0)
+                return boundarySegments;
+
+            var envelope = BuildEnvelopeOutlineFromSegmentPoints(boundarySegments, width >= height);
+            envelope = PrepareBoundaryPath(envelope);
+            envelope = EnsureClosedOutline(envelope);
+
+            if (envelope == null || envelope.Count < 4)
+                return boundarySegments;
+
+            foreach (var segment in boundarySegments) {
+                if (segment == null || segment.StartPoint == null || segment.EndPoint == null)
+                    continue;
+
+                var midpoint = new TSG.Point(
+                    (segment.StartPoint.X + segment.EndPoint.X) * 0.5,
+                    (segment.StartPoint.Y + segment.EndPoint.Y) * 0.5,
+                    0
+                );
+
+                if (IsPointStrictlyInsidePolygon(midpoint, envelope))
+                    continue;
+
+                result.Add(new ProjectedSegment2D {
+                    StartPoint = new TSG.Point(segment.StartPoint.X, segment.StartPoint.Y, 0),
+                    EndPoint = new TSG.Point(segment.EndPoint.X, segment.EndPoint.Y, 0)
+                });
+            }
+
+            return result.Count >= 2 ? result : boundarySegments;
+        }
+
+        private static List<TSG.Point> BuildEnvelopeOutlineFromSegmentPoints(
+            List<ProjectedSegment2D> boundarySegments,
+            bool horizontalDominant
+        ) {
+            var sampledPoints = new List<TSG.Point>();
+            if (boundarySegments == null || boundarySegments.Count == 0) return sampledPoints;
+
+            foreach (var segment in boundarySegments) {
+                if (segment == null || segment.StartPoint == null || segment.EndPoint == null)
+                    continue;
+
+                sampledPoints.Add(new TSG.Point(segment.StartPoint.X, segment.StartPoint.Y, 0));
+                sampledPoints.Add(new TSG.Point(segment.EndPoint.X, segment.EndPoint.Y, 0));
+                sampledPoints.Add(new TSG.Point(
+                    (segment.StartPoint.X + segment.EndPoint.X) * 0.5,
+                    (segment.StartPoint.Y + segment.EndPoint.Y) * 0.5,
+                    0
+                ));
+            }
+
+            sampledPoints = RemoveDuplicatePointsByDistance(sampledPoints, DuplicateToleranceMillimeters);
+            if (sampledPoints.Count < 4) return sampledPoints;
+
+            if (horizontalDominant)
+                return BuildHorizontalEnvelopeOutline(sampledPoints);
+
+            return BuildVerticalEnvelopeOutline(sampledPoints);
+        }
+
+        private static List<TSG.Point> BuildHorizontalEnvelopeOutline(List<TSG.Point> points) {
+            var groupedPoints = points
+                .Where(point => point != null)
+                .GroupBy(point => Math.Round(point.X / DuplicateToleranceMillimeters))
+                .OrderBy(group => group.Key)
+                .ToList();
+
+            if (groupedPoints.Count < 2) return new List<TSG.Point>();
+
+            var upper = new List<TSG.Point>();
+            var lower = new List<TSG.Point>();
+
+            foreach (var group in groupedPoints) {
+                var orderedPoints = group.OrderBy(point => point.Y).ToList();
+                var x = orderedPoints.Average(point => point.X);
+                var minY = orderedPoints.First().Y;
+                var maxY = orderedPoints.Last().Y;
+
+                upper.Add(new TSG.Point(x, maxY, 0));
+                lower.Add(new TSG.Point(x, minY, 0));
+            }
+
+            var outline = new List<TSG.Point>();
+            outline.AddRange(upper);
+            outline.AddRange(lower.AsEnumerable().Reverse());
+            return outline;
+        }
+
+        private static List<TSG.Point> BuildVerticalEnvelopeOutline(List<TSG.Point> points) {
+            var groupedPoints = points
+                .Where(point => point != null)
+                .GroupBy(point => Math.Round(point.Y / DuplicateToleranceMillimeters))
+                .OrderBy(group => group.Key)
+                .ToList();
+
+            if (groupedPoints.Count < 2) return new List<TSG.Point>();
+
+            var left = new List<TSG.Point>();
+            var right = new List<TSG.Point>();
+
+            foreach (var group in groupedPoints) {
+                var orderedPoints = group.OrderBy(point => point.X).ToList();
+                var y = orderedPoints.Average(point => point.Y);
+                var minX = orderedPoints.First().X;
+                var maxX = orderedPoints.Last().X;
+
+                left.Add(new TSG.Point(minX, y, 0));
+                right.Add(new TSG.Point(maxX, y, 0));
+            }
+
+            var outline = new List<TSG.Point>();
+            outline.AddRange(right);
+            outline.AddRange(left.AsEnumerable().Reverse());
+            return outline;
+        }
+
+        private static List<List<TSG.Point>> BuildBoundaryPathsFromSegments(List<ProjectedSegment2D> boundarySegments) {
+            var result = new List<List<TSG.Point>>();
+            if (boundarySegments == null || boundarySegments.Count == 0) return result;
+
+            var usedSegments = new bool[boundarySegments.Count];
+            var nodeDegrees = BuildBoundaryNodeDegrees(boundarySegments);
+
+            while (usedSegments.Any(used => !used)) {
+                var startSegmentIndex = GetNextUnusedSegmentIndex(usedSegments);
+                if (startSegmentIndex < 0) break;
+
+                var currentSegment = boundarySegments[startSegmentIndex];
+                var currentPath = new List<TSG.Point> {
+                    new TSG.Point(currentSegment.StartPoint.X, currentSegment.StartPoint.Y, 0),
+                    new TSG.Point(currentSegment.EndPoint.X, currentSegment.EndPoint.Y, 0)
+                };
+
+                usedSegments[startSegmentIndex] = true;
+
+                ExtendBoundaryPath(boundarySegments, usedSegments, currentPath, true, nodeDegrees);
+                ExtendBoundaryPath(boundarySegments, usedSegments, currentPath, false, nodeDegrees);
+
+                currentPath = RemoveSequentialDuplicatePoints(currentPath);
+                if (currentPath.Count < 2) continue;
+
+                if (ArePointsEqual(currentPath[0], currentPath[currentPath.Count - 1]))
+                    currentPath.RemoveAt(currentPath.Count - 1);
+
+                if (currentPath.Count >= 2)
+                    result.Add(currentPath);
+            }
+
+            return result;
+        }
+
+        private static List<List<TSG.Point>> RemoveInteriorBoundaryPaths(List<List<TSG.Point>> boundaryPaths) {
+            if (boundaryPaths == null || boundaryPaths.Count <= 1) return boundaryPaths ?? new List<List<TSG.Point>>();
+
+            var indexedPaths = boundaryPaths
+                .Select((path, index) => new {
+                    Index = index,
+                    Path = path,
+                    Area = Math.Abs(ComputeSignedArea(EnsureClosedOutlineCopy(path))),
+                    Length = ComputePolylineLength(path)
+                })
+                .OrderByDescending(item => item.Area)
+                .ThenByDescending(item => item.Length)
+                .ToList();
+
+            var keptPaths = new List<List<TSG.Point>>();
+
+            foreach (var indexedPath in indexedPaths) {
+                if (IsBoundaryPathInsideAnyOtherBoundary(indexedPath.Path, keptPaths))
+                    continue;
+
+                keptPaths.Add(indexedPath.Path);
+            }
+
+            return keptPaths;
+        }
+
+        private static bool IsBoundaryPathInsideAnyOtherBoundary(
+            List<TSG.Point> candidatePath,
+            List<List<TSG.Point>> outerPaths
+        ) {
+            if (candidatePath == null || candidatePath.Count < 2 || outerPaths == null || outerPaths.Count == 0)
+                return false;
+
+            var samplePoints = GetBoundaryPathSamplePoints(candidatePath);
+            if (samplePoints.Count == 0) return false;
+
+            foreach (var outerPath in outerPaths) {
+                var closedOuterPath = EnsureClosedOutlineCopy(outerPath);
+                if (closedOuterPath.Count < 4) continue;
+
+                var insideSamples = 0;
+                foreach (var samplePoint in samplePoints)
+                    if (IsPointStrictlyInsidePolygon(samplePoint, closedOuterPath))
+                        insideSamples++;
+
+                if (insideSamples == samplePoints.Count)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static List<TSG.Point> GetBoundaryPathSamplePoints(List<TSG.Point> path) {
+            var result = new List<TSG.Point>();
+            if (path == null || path.Count < 2) return result;
+
+            for (var index = 0; index < path.Count - 1; index++) {
+                var startPoint = path[index];
+                var endPoint = path[index + 1];
+
+                if (ComputeDistance2D(startPoint, endPoint) <= DuplicateToleranceMillimeters)
+                    continue;
+
+                result.Add(new TSG.Point(
+                    (startPoint.X + endPoint.X) * 0.5,
+                    (startPoint.Y + endPoint.Y) * 0.5,
+                    0
+                ));
+            }
+
+            if (result.Count == 0 && path.Count >= 3) {
+                var centroidX = path.Average(point => point.X);
+                var centroidY = path.Average(point => point.Y);
+                result.Add(new TSG.Point(centroidX, centroidY, 0));
+            }
+
+            return result;
+        }
+
+        private static bool IsPointStrictlyInsidePolygon(TSG.Point point, IReadOnlyList<TSG.Point> polygonPoints) {
+            if (point == null || polygonPoints == null || polygonPoints.Count < 3) return false;
+
+            for (var index = 0; index < polygonPoints.Count - 1; index++)
+                if (IsPointOnSegment(point, polygonPoints[index], polygonPoints[index + 1]))
+                    return false;
+
+            return IsPointInsidePolygon(point, polygonPoints);
+        }
+
+        private static List<TSG.Point> EnsureClosedOutlineCopy(List<TSG.Point> outline) {
+            if (outline == null) return new List<TSG.Point>();
+
+            var copy = outline
+                .Where(point => point != null)
+                .Select(point => new TSG.Point(point.X, point.Y, 0))
+                .ToList();
+
+            return EnsureClosedOutline(copy);
+        }
+
+
+        private static void ExtendBoundaryPath(
+            List<ProjectedSegment2D> boundarySegments,
+            bool[] usedSegments,
+            List<TSG.Point> currentPath,
+            bool appendToEnd,
+            Dictionary<string, int> nodeDegrees
+        ) {
+            if (boundarySegments == null || usedSegments == null || currentPath == null || currentPath.Count < 2)
+                return;
+
+            var extended = true;
+            while (extended) {
+                extended = false;
+
+                var bestSegmentIndex = FindBestConnectedBoundarySegmentIndex(
+                    boundarySegments,
+                    usedSegments,
+                    currentPath,
+                    appendToEnd,
+                    nodeDegrees,
+                    out var nextPoint
+                );
+
+                if (bestSegmentIndex < 0 || nextPoint == null)
+                    break;
+
+                if (appendToEnd)
+                    currentPath.Add(new TSG.Point(nextPoint.X, nextPoint.Y, 0));
+                else
+                    currentPath.Insert(0, new TSG.Point(nextPoint.X, nextPoint.Y, 0));
+
+                usedSegments[bestSegmentIndex] = true;
+                extended = true;
+            }
+        }
+
+        private static int FindBestConnectedBoundarySegmentIndex(
+            List<ProjectedSegment2D> boundarySegments,
+            bool[] usedSegments,
+            List<TSG.Point> currentPath,
+            bool appendToEnd,
+            Dictionary<string, int> nodeDegrees,
+            out TSG.Point bestNextPoint
+        ) {
+            bestNextPoint = null;
+            if (boundarySegments == null || usedSegments == null || currentPath == null || currentPath.Count < 2)
+                return -1;
+
+            var connectionPoint = appendToEnd ? currentPath[currentPath.Count - 1] : currentPath[0];
+            var previousPoint = appendToEnd ? currentPath[currentPath.Count - 2] : currentPath[1];
+
+            var bestIndex = -1;
+            var bestClosesPath = true;
+            var bestBranchDegree = int.MaxValue;
+            var bestLength = double.PositiveInfinity;
+            var bestAngle = double.NegativeInfinity;
+
+            for (var index = 0; index < boundarySegments.Count; index++) {
+                if (usedSegments[index]) continue;
+
+                var segment = boundarySegments[index];
+                TSG.Point candidateNextPoint = null;
+
+                if (ArePointsEqual(connectionPoint, segment.StartPoint))
+                    candidateNextPoint = segment.EndPoint;
+                else if (ArePointsEqual(connectionPoint, segment.EndPoint))
+                    candidateNextPoint = segment.StartPoint;
+
+                if (candidateNextPoint == null) continue;
+                if (ArePointsEqual(candidateNextPoint, previousPoint)) continue;
+
+                var closesPath = appendToEnd
+                    ? ArePointsEqual(candidateNextPoint, currentPath[0])
+                    : ArePointsEqual(candidateNextPoint, currentPath[currentPath.Count - 1]);
+
+                if (!closesPath && IsPointAlreadyUsedInPath(candidateNextPoint, currentPath))
+                    continue;
+
+                if (WouldCandidateSegmentIntersectCurrentPath(currentPath, connectionPoint, candidateNextPoint,
+                        appendToEnd))
+                    continue;
+
+                var branchDegree = GetBoundaryNodeDegree(nodeDegrees, candidateNextPoint);
+                var length = ComputeDistance2D(connectionPoint, candidateNextPoint);
+                var angle = ComputeAngleInDegrees(previousPoint, connectionPoint, candidateNextPoint, 1e-6);
+
+                if (bestIndex < 0 ||
+                    (bestClosesPath && !closesPath) ||
+                    (bestClosesPath == closesPath && branchDegree < bestBranchDegree) ||
+                    (bestClosesPath == closesPath && branchDegree == bestBranchDegree &&
+                     Math.Abs(length - bestLength) > 0.001 && length < bestLength) ||
+                    (bestClosesPath == closesPath && branchDegree == bestBranchDegree &&
+                     Math.Abs(length - bestLength) <= 0.001 && Math.Abs(angle - bestAngle) > 0.001 &&
+                     angle > bestAngle)) {
+                    bestIndex = index;
+                    bestNextPoint = candidateNextPoint;
+                    bestClosesPath = closesPath;
+                    bestBranchDegree = branchDegree;
+                    bestLength = length;
+                    bestAngle = angle;
+                }
+            }
+
+            return bestIndex;
+        }
+
+        private static Dictionary<string, int> BuildBoundaryNodeDegrees(List<ProjectedSegment2D> boundarySegments) {
+            var result = new Dictionary<string, int>();
+            if (boundarySegments == null || boundarySegments.Count == 0) return result;
+
+            foreach (var segment in boundarySegments) {
+                if (segment?.StartPoint != null) {
+                    var startKey = BuildPointKey(segment.StartPoint);
+                    if (!result.ContainsKey(startKey))
+                        result[startKey] = 0;
+                    result[startKey]++;
+                }
+
+                if (segment?.EndPoint != null) {
+                    var endKey = BuildPointKey(segment.EndPoint);
+                    if (!result.ContainsKey(endKey))
+                        result[endKey] = 0;
+                    result[endKey]++;
+                }
+            }
+
+            return result;
+        }
+
+        private static int GetBoundaryNodeDegree(Dictionary<string, int> nodeDegrees, TSG.Point point) {
+            if (nodeDegrees == null || point == null) return int.MaxValue;
+
+            var key = BuildPointKey(point);
+            return nodeDegrees.TryGetValue(key, out var degree) ? degree : int.MaxValue;
+        }
+
+        private static string BuildPointKey(TSG.Point point) {
+            return
+                Math.Round(point.X / DuplicateToleranceMillimeters) + ":" +
+                Math.Round(point.Y / DuplicateToleranceMillimeters);
+        }
+
+        private static bool IsPointAlreadyUsedInPath(TSG.Point point, List<TSG.Point> path) {
+            if (point == null || path == null || path.Count == 0) return false;
+
+            foreach (var currentPoint in path)
+                if (ArePointsEqual(point, currentPoint))
+                    return true;
+
+            return false;
+        }
+
+        private static bool WouldCandidateSegmentIntersectCurrentPath(
+            List<TSG.Point> currentPath,
+            TSG.Point segmentStartPoint,
+            TSG.Point segmentEndPoint,
+            bool appendToEnd
+        ) {
+            if (currentPath == null || currentPath.Count < 2 || segmentStartPoint == null || segmentEndPoint == null)
+                return false;
+
+            for (var index = 0; index < currentPath.Count - 1; index++) {
+                var pathSegmentStartPoint = currentPath[index];
+                var pathSegmentEndPoint = currentPath[index + 1];
+
+                if (appendToEnd && index == currentPath.Count - 2)
+                    continue;
+
+                if (!appendToEnd && index == 0)
+                    continue;
+
+                if (!TryGetSegmentIntersectionPoint(
+                        segmentStartPoint,
+                        segmentEndPoint,
+                        pathSegmentStartPoint,
+                        pathSegmentEndPoint,
+                        out var intersectionPoint))
+                    continue;
+
+                var touchesAtAllowedEndpoint =
+                    ArePointsEqual(intersectionPoint, segmentStartPoint) ||
+                    ArePointsEqual(intersectionPoint, segmentEndPoint) ||
+                    ArePointsEqual(intersectionPoint, pathSegmentStartPoint) ||
+                    ArePointsEqual(intersectionPoint, pathSegmentEndPoint);
+
+                if (!touchesAtAllowedEndpoint)
+                    return true;
+
+                var sharesConnectionEndpoint = ArePointsEqual(intersectionPoint, segmentStartPoint);
+                var closesPathAtOppositeEnd = appendToEnd
+                    ? ArePointsEqual(intersectionPoint, currentPath[0])
+                    : ArePointsEqual(intersectionPoint, currentPath[currentPath.Count - 1]);
+
+                if (!sharesConnectionEndpoint && !closesPathAtOppositeEnd)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static int GetNextUnusedSegmentIndex(bool[] usedSegments) {
+            if (usedSegments == null) return -1;
+
+            for (var index = 0; index < usedSegments.Length; index++)
+                if (!usedSegments[index])
+                    return index;
+
+            return -1;
+        }
+
+        private static List<TSG.Point> PrepareBoundaryPath(List<TSG.Point> points) {
+            if (points == null) return null;
+
+            var result = RemoveSequentialDuplicatePoints(points);
+            result = RemoveNearDuplicates(result, DuplicateToleranceMillimeters);
+            result = SimplifyBoundaryPath(result);
+            result = RemoveNearDuplicates(result, DuplicateToleranceMillimeters);
+
+            return result;
+        }
+
+        private static List<TSG.Point> SimplifyBoundaryPath(List<TSG.Point> points) {
+            if (points == null || points.Count < 3) return points;
+
+            var result = new List<TSG.Point> {
+                new TSG.Point(points[0].X, points[0].Y, 0)
+            };
+
+            for (var index = 1; index < points.Count - 1; index++) {
+                var previousPoint = result[result.Count - 1];
+                var currentPoint = points[index];
+                var nextPoint = points[index + 1];
+
+                if (GetDistanceToSegment(currentPoint, previousPoint, nextPoint) <= 0.1)
+                    continue;
+
+                result.Add(new TSG.Point(currentPoint.X, currentPoint.Y, 0));
+            }
+
+            result.Add(new TSG.Point(points[points.Count - 1].X, points[points.Count - 1].Y, 0));
+            return RemoveSequentialDuplicatePoints(result);
+        }
+
+        private static List<TSG.Point> RemoveSequentialDuplicatePoints(IEnumerable<TSG.Point> points) {
+            var result = new List<TSG.Point>();
+            if (points == null) return result;
+
+            foreach (var point in points) {
+                if (point == null) continue;
+                if (result.Count == 0 || !ArePointsEqual(result[result.Count - 1], point))
+                    result.Add(new TSG.Point(point.X, point.Y, 0));
+            }
+
+            return result;
+        }
+
+        private static double ComputeSignedArea(IReadOnlyList<TSG.Point> points) {
+            if (points == null || points.Count < 3) return 0.0;
+
+            var area = 0.0;
+            for (var index = 0; index < points.Count - 1; index++)
+                area += points[index].X * points[index + 1].Y - points[index + 1].X * points[index].Y;
+
+            return area * 0.5;
+        }
+
+        private static int ComparePointsLexicographically(TSG.Point firstPoint, TSG.Point secondPoint) {
+            if (Math.Abs(firstPoint.X - secondPoint.X) > DuplicateToleranceMillimeters)
+                return firstPoint.X < secondPoint.X ? -1 : 1;
+
+            if (Math.Abs(firstPoint.Y - secondPoint.Y) > DuplicateToleranceMillimeters)
+                return firstPoint.Y < secondPoint.Y ? -1 : 1;
+
+            return 0;
+        }
+
+        private static string BuildSegmentKey(TSG.Point startPoint, TSG.Point endPoint) {
+            return
+                Math.Round(startPoint.X / DuplicateToleranceMillimeters) + ":" +
+                Math.Round(startPoint.Y / DuplicateToleranceMillimeters) + ":" +
+                Math.Round(endPoint.X / DuplicateToleranceMillimeters) + ":" +
+                Math.Round(endPoint.Y / DuplicateToleranceMillimeters);
+        }
+
+        private static bool TryGetSegmentIntersectionPoint(
+            TSG.Point firstStartPoint,
+            TSG.Point firstEndPoint,
+            TSG.Point secondStartPoint,
+            TSG.Point secondEndPoint,
+            out TSG.Point intersectionPoint
+        ) {
+            intersectionPoint = null;
+
+            var denominator =
+                (firstStartPoint.X - firstEndPoint.X) * (secondStartPoint.Y - secondEndPoint.Y) -
+                (firstStartPoint.Y - firstEndPoint.Y) * (secondStartPoint.X - secondEndPoint.X);
+
+            if (Math.Abs(denominator) <= 1e-9)
+                return false;
+
+            var t =
+                ((firstStartPoint.X - secondStartPoint.X) * (secondStartPoint.Y - secondEndPoint.Y) -
+                 (firstStartPoint.Y - secondStartPoint.Y) * (secondStartPoint.X - secondEndPoint.X)) / denominator;
+
+            var u =
+                ((firstStartPoint.X - secondStartPoint.X) * (firstStartPoint.Y - firstEndPoint.Y) -
+                 (firstStartPoint.Y - secondStartPoint.Y) * (firstStartPoint.X - firstEndPoint.X)) / denominator;
+
+            if (t < -1e-6 || t > 1.0 + 1e-6) return false;
+            if (u < -1e-6 || u > 1.0 + 1e-6) return false;
+
+            intersectionPoint = new TSG.Point(
+                firstStartPoint.X + t * (firstEndPoint.X - firstStartPoint.X),
+                firstStartPoint.Y + t * (firstEndPoint.Y - firstStartPoint.Y),
+                0
+            );
+
+            return true;
+        }
+
+        private static bool AreSegmentsCollinear(
+            TSG.Point firstStartPoint,
+            TSG.Point firstEndPoint,
+            TSG.Point secondStartPoint,
+            TSG.Point secondEndPoint
+        ) {
+            return
+                Math.Abs(CrossProduct(firstStartPoint, firstEndPoint, secondStartPoint)) <=
+                DuplicateToleranceMillimeters &&
+                Math.Abs(CrossProduct(firstStartPoint, firstEndPoint, secondEndPoint)) <= DuplicateToleranceMillimeters;
+        }
+
+        private static double CrossProduct(TSG.Point firstPoint, TSG.Point secondPoint, TSG.Point thirdPoint) {
+            return
+                (secondPoint.X - firstPoint.X) * (thirdPoint.Y - firstPoint.Y) -
+                (secondPoint.Y - firstPoint.Y) * (thirdPoint.X - firstPoint.X);
+        }
+
+        private static bool IsPointOnSegment(TSG.Point point, TSG.Point segmentStartPoint, TSG.Point segmentEndPoint) {
+            if (point == null || segmentStartPoint == null || segmentEndPoint == null) return false;
+            if (Math.Abs(CrossProduct(segmentStartPoint, segmentEndPoint, point)) > DuplicateToleranceMillimeters)
+                return false;
+
+            var minX = Math.Min(segmentStartPoint.X, segmentEndPoint.X) - DuplicateToleranceMillimeters;
+            var maxX = Math.Max(segmentStartPoint.X, segmentEndPoint.X) + DuplicateToleranceMillimeters;
+            var minY = Math.Min(segmentStartPoint.Y, segmentEndPoint.Y) - DuplicateToleranceMillimeters;
+            var maxY = Math.Max(segmentStartPoint.Y, segmentEndPoint.Y) + DuplicateToleranceMillimeters;
+
+            return point.X >= minX && point.X <= maxX && point.Y >= minY && point.Y <= maxY;
+        }
+
+        private static bool IsPointInsidePolygon(TSG.Point point, IReadOnlyList<TSG.Point> polygonPoints) {
+            if (point == null || polygonPoints == null || polygonPoints.Count < 3) return false;
+
+            var isInside = false;
+            var lastIndex = polygonPoints.Count - 1;
+
+            for (var index = 0; index < polygonPoints.Count; index++) {
+                var currentPoint = polygonPoints[index];
+                var previousPoint = polygonPoints[lastIndex];
+
+                if (IsPointOnSegment(point, previousPoint, currentPoint))
+                    return true;
+
+                var intersects =
+                    currentPoint.Y > point.Y != previousPoint.Y > point.Y &&
+                    point.X < (previousPoint.X - currentPoint.X) * (point.Y - currentPoint.Y) /
+                    (previousPoint.Y - currentPoint.Y + 1e-12) + currentPoint.X;
+
+                if (intersects)
+                    isInside = !isInside;
+
+                lastIndex = index;
+            }
+
+            return isInside;
+        }
+
+        private static double ComputePolylineLength(IReadOnlyList<TSG.Point> points) {
+            if (points == null || points.Count < 2) return 0.0;
+
+            var totalLength = 0.0;
+            for (var index = 0; index < points.Count - 1; index++)
+                totalLength += ComputeDistance2D(points[index], points[index + 1]);
+
+            return totalLength;
         }
 
         private static List<OutlineSegmentGroup> BuildOutlineSegmentGroups(List<TSG.Point> vertices) {
@@ -385,7 +1348,7 @@ namespace HFT_DrawingHelper {
                 var endIndex = significantCornerIndices[(index + 1) % significantCornerIndices.Count];
 
                 var path = CollectPathBetweenCorners(vertices, startIndex, endIndex);
-                path = PrepareSegmentPath(path);
+                path = PrepareBoundaryPath(path);
 
                 if (path == null || path.Count < 2) continue;
 
@@ -403,6 +1366,7 @@ namespace HFT_DrawingHelper {
         }
 
         #endregion
+
 
         #region Shared Edge Numbering
 

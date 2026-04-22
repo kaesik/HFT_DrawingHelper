@@ -2,12 +2,15 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
+using Tekla.Structures.Dialog.UIControls;
 using TS = Tekla.Structures;
 using TSM = Tekla.Structures.Model;
 using TSD = Tekla.Structures.Drawing;
@@ -17,18 +20,29 @@ namespace HFT_DrawingHelper {
     public partial class MainWindow {
         private static readonly TSM.Model MyModel = new TSM.Model();
 
+        private readonly ObservableCollection<string> _availableMarkAttributeNames =
+            new ObservableCollection<string>();
+
+        private readonly ObservableCollection<string> _availableViewAttributeNames =
+            new ObservableCollection<string>();
+
         private readonly ObservableCollection<SelectableEdgeGroup> _edgeGroups =
             new ObservableCollection<SelectableEdgeGroup>();
 
         private readonly Dictionary<int, List<TSD.DrawingObject>> _edgePreviewObjectsByGroupNumber =
             new Dictionary<int, List<TSD.DrawingObject>>();
 
+        private bool _sectionAttributeOptionsLoaded;
+        private bool _sectionAttributeOptionsLoading;
         private SidePanelMode _sidePanelMode = SidePanelMode.None;
 
         public MainWindow() {
             if (MyModel.GetConnectionStatus()) {
                 InitializeComponent();
                 EdgeGroupsList.ItemsSource = _edgeGroups;
+                ViewAttributeNameComboBox.ItemsSource = _availableViewAttributeNames;
+                MarkAttributeNameComboBox.ItemsSource = _availableMarkAttributeNames;
+                LoadSectionSettingsIntoPanel();
                 ModelDrawingLabel.Text = MyModel.GetInfo().ModelName.Replace(".db1", "");
                 return;
             }
@@ -129,6 +143,223 @@ namespace HFT_DrawingHelper {
 
         private void ThemeToggle_Click(object sender, RoutedEventArgs e) {
             ThemeService.Toggle();
+        }
+
+        private void SettingsToggleButton_Click(object sender, RoutedEventArgs e) {
+            ToggleSettingsPanel();
+        }
+
+        private void CloseSettingsPanelButton_Click(object sender, RoutedEventArgs e) {
+            SetSettingsPanelVisibility(false);
+        }
+
+        private void ApplySectionSettingsButton_Click(object sender, RoutedEventArgs e) {
+            var viewAttributeName = ViewAttributeNameComboBox.SelectedItem as string ??
+                                    ViewAttributeNameComboBox.Text?.Trim();
+            var markAttributeName = MarkAttributeNameComboBox.SelectedItem as string ??
+                                    MarkAttributeNameComboBox.Text?.Trim();
+
+            if (string.IsNullOrWhiteSpace(viewAttributeName) || string.IsNullOrWhiteSpace(markAttributeName)) {
+                MessageBox.Show("Wybierz ViewAttributeName i MarkAttributeName z listy.");
+                return;
+            }
+
+            UpdateSectionAttributeNames(viewAttributeName, markAttributeName);
+            LoadSectionSettingsIntoPanel();
+        }
+
+        private void RefreshSectionSettingsButton_Click(object sender, RoutedEventArgs e) {
+            BeginLoadSectionAttributeOptions(true);
+        }
+
+        private void ToggleSettingsPanel() {
+            var isVisible = SettingsPanelBorder.Visibility != Visibility.Visible;
+            SetSettingsPanelVisibility(isVisible);
+
+            if (isVisible) {
+                LoadSectionSettingsIntoPanel();
+                BeginLoadSectionAttributeOptions(false);
+            }
+        }
+
+        private void SetSettingsPanelVisibility(bool isVisible) {
+            if (SettingsPanelBorder == null) return;
+            SettingsPanelBorder.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void BeginLoadSectionAttributeOptions(bool forceReload) {
+            if (ViewAttributeNameComboBox == null || MarkAttributeNameComboBox == null) return;
+            if (_sectionAttributeOptionsLoading) return;
+
+            if (!forceReload && _sectionAttributeOptionsLoaded) {
+                LoadSectionSettingsIntoPanel();
+                return;
+            }
+
+            _sectionAttributeOptionsLoading = true;
+
+            if (RefreshSectionSettingsButton != null)
+                RefreshSectionSettingsButton.IsEnabled = false;
+
+            Dispatcher.BeginInvoke(new Action(() => {
+                try {
+                    TryReloadSectionAttributeOptions();
+                    _sectionAttributeOptionsLoaded = true;
+                    LoadSectionSettingsIntoPanel();
+                }
+                finally {
+                    _sectionAttributeOptionsLoading = false;
+
+                    if (RefreshSectionSettingsButton != null)
+                        RefreshSectionSettingsButton.IsEnabled = true;
+                }
+            }), DispatcherPriority.Background);
+        }
+
+        private void LoadSectionSettingsIntoPanel() {
+            if (ViewAttributeNameComboBox == null || MarkAttributeNameComboBox == null) return;
+
+            EnsureAttributeOptionExists(_availableViewAttributeNames, _viewAttributeName, DefaultViewAttributeName);
+            EnsureAttributeOptionExists(_availableMarkAttributeNames, _markAttributeName, DefaultMarkAttributeName);
+
+            ViewAttributeNameComboBox.SelectedItem = _availableViewAttributeNames
+                .FirstOrDefault(item => string.Equals(item, _viewAttributeName, StringComparison.OrdinalIgnoreCase));
+
+            MarkAttributeNameComboBox.SelectedItem = _availableMarkAttributeNames
+                .FirstOrDefault(item => string.Equals(item, _markAttributeName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void ReloadSectionAttributeOptions() {
+            PopulateAttributeCollection(
+                _availableViewAttributeNames,
+                GetAvailableAttributeNames(
+                    new[] { "vi", "vw", "view" },
+                    _viewAttributeName,
+                    DefaultViewAttributeName
+                ),
+                _viewAttributeName,
+                DefaultViewAttributeName
+            );
+
+            PopulateAttributeCollection(
+                _availableMarkAttributeNames,
+                GetAvailableAttributeNames(
+                    new[] { "csm", "mrk", "mark" },
+                    _markAttributeName,
+                    DefaultMarkAttributeName
+                ),
+                _markAttributeName,
+                DefaultMarkAttributeName
+            );
+        }
+
+        private void TryReloadSectionAttributeOptions() {
+            try {
+                ReloadSectionAttributeOptions();
+            }
+            catch {
+                PopulateAttributeCollection(
+                    _availableViewAttributeNames,
+                    Array.Empty<string>(),
+                    _viewAttributeName,
+                    DefaultViewAttributeName
+                );
+
+                PopulateAttributeCollection(
+                    _availableMarkAttributeNames,
+                    Array.Empty<string>(),
+                    _markAttributeName,
+                    DefaultMarkAttributeName
+                );
+            }
+        }
+
+        private static void PopulateAttributeCollection(
+            ObservableCollection<string> targetCollection,
+            IEnumerable<string> discoveredNames,
+            params string[] requiredNames
+        ) {
+            if (targetCollection == null) return;
+
+            var finalNames = OrderAttributeNames(discoveredNames ?? Enumerable.Empty<string>());
+
+            foreach (var requiredName in requiredNames) {
+                if (string.IsNullOrWhiteSpace(requiredName)) continue;
+                if (finalNames.Any(item => string.Equals(item, requiredName, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                finalNames.Add(requiredName.Trim());
+            }
+
+            finalNames = OrderAttributeNames(finalNames);
+
+            targetCollection.Clear();
+            foreach (var item in finalNames)
+                targetCollection.Add(item);
+        }
+
+        private static void EnsureAttributeOptionExists(
+            ObservableCollection<string> targetCollection,
+            params string[] values
+        ) {
+            if (targetCollection == null || values == null) return;
+
+            foreach (var value in values) {
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                if (targetCollection.Any(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                targetCollection.Add(value.Trim());
+            }
+
+            var orderedItems = OrderAttributeNames(targetCollection);
+            targetCollection.Clear();
+            foreach (var item in orderedItems)
+                targetCollection.Add(item);
+        }
+
+        private static List<string> GetAvailableAttributeNames(
+            IEnumerable<string> candidateExtensions,
+            params string[] fallbackNames
+        ) {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (candidateExtensions != null)
+                foreach (var extension in candidateExtensions) {
+                    if (string.IsNullOrWhiteSpace(extension)) continue;
+
+                    try {
+                        var fileNames = EnvironmentFiles.GetMultiDirectoryFileList(extension.Trim());
+                        if (fileNames == null) continue;
+
+                        foreach (var fileName in fileNames)
+                            AddNormalizedAttributeName(names, fileName);
+                    }
+                    catch {
+                    }
+                }
+
+            foreach (var fallbackName in fallbackNames)
+                AddNormalizedAttributeName(names, fallbackName);
+
+            return OrderAttributeNames(names);
+        }
+
+        private static void AddNormalizedAttributeName(ICollection<string> targetCollection, string value) {
+            if (targetCollection == null || string.IsNullOrWhiteSpace(value)) return;
+
+            var normalizedValue = Path.GetFileNameWithoutExtension(value.Trim());
+            if (string.IsNullOrWhiteSpace(normalizedValue)) return;
+
+            targetCollection.Add(normalizedValue);
+        }
+
+        private static List<string> OrderAttributeNames(IEnumerable<string> names) {
+            return names
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => string.Equals(name, "standard", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private enum SidePanelMode {

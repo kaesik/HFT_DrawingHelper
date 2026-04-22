@@ -189,18 +189,6 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
-        #region Section Attributes
-
-        private static (TSD.View.ViewAttributes, TSD.SectionMarkBase.SectionMarkAttributes) GetSectionAttributes() {
-            var view = new TSD.View.ViewAttributes(ViewAttributeName);
-            var mark = new TSD.SectionMarkBase.SectionMarkAttributes();
-            mark.LoadAttributes(MarkAttributeName);
-
-            return (view, mark);
-        }
-
-        #endregion
-
         #region Section Orientation
 
         private static void NormalizeSectionDirection(ref TSG.Point startPoint, ref TSG.Point endPoint) {
@@ -253,10 +241,34 @@ namespace HFT_DrawingHelper {
 
         #endregion
 
+        #region Section Attributes
+
+        private static (TSD.View.ViewAttributes, TSD.SectionMarkBase.SectionMarkAttributes) GetSectionAttributes() {
+            var view = new TSD.View.ViewAttributes(
+                GetSectionAttributeNameOrDefault(_viewAttributeName, DefaultViewAttributeName));
+            var mark = new TSD.SectionMarkBase.SectionMarkAttributes();
+            mark.LoadAttributes(GetSectionAttributeNameOrDefault(_markAttributeName, DefaultMarkAttributeName));
+
+            return (view, mark);
+        }
+
+        private static void UpdateSectionAttributeNames(string viewAttributeName, string markAttributeName) {
+            _viewAttributeName = GetSectionAttributeNameOrDefault(viewAttributeName, DefaultViewAttributeName);
+            _markAttributeName = GetSectionAttributeNameOrDefault(markAttributeName, DefaultMarkAttributeName);
+        }
+
+        private static string GetSectionAttributeNameOrDefault(string value, string defaultValue) {
+            return string.IsNullOrWhiteSpace(value) ? defaultValue : value.Trim();
+        }
+
+        #endregion
+
         #region Constants
 
-        private const string ViewAttributeName = "#HFT_Kant_Section";
-        private const string MarkAttributeName = "#HFT_SECTION_V";
+        private const string DefaultViewAttributeName = "#HFT_Kant_Section";
+        private const string DefaultMarkAttributeName = "#HFT_SECTION_V";
+        private static string _viewAttributeName = DefaultViewAttributeName;
+        private static string _markAttributeName = DefaultMarkAttributeName;
         private const double DepthUp = 1.0;
         private const double DepthDown = 1.0;
         private const double SectionLineLengthMillimeters = 300.0;

@@ -29,6 +29,7 @@
 
         <Grid>
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="420" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
@@ -38,7 +39,7 @@
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0"
-                    Grid.ColumnSpan="2"
+                    Grid.ColumnSpan="3"
                     Background="{DynamicResource TitleBarBgBrush}"
                     CornerRadius="7,7,0,0"
                     MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
@@ -72,6 +73,11 @@
                     <StackPanel Grid.Column="3"
                                 Orientation="Horizontal"
                                 VerticalAlignment="Stretch">
+                        <Button x:Name="SettingsToggleButton"
+                                Style="{StaticResource IconButton}"
+                                Content="&#xE713;"
+                                ToolTip="Ustawienia przekrojów"
+                                Click="SettingsToggleButton_Click" />
                         <Button x:Name="ThemeToggleButton"
                                 Style="{StaticResource IconButton}"
                                 Content="&#xE793;"
@@ -86,8 +92,108 @@
                 </Grid>
             </Border>
 
+            <Border x:Name="SettingsPanelBorder"
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Visibility="Collapsed"
+                    BorderBrush="{DynamicResource DividerColorBrush}"
+                    BorderThickness="0,0,1,0">
+
+                <Grid Width="260"
+                      Margin="14,10,14,14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0"
+                          Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0"
+                                   Text="USTAWIENIA PRZEKROJÓW"
+                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+
+                        <Button Grid.Column="1"
+                                Style="{StaticResource IconButton}"
+                                Content="&#xE8BB;"
+                                Width="22"
+                                Height="22"
+                                FontSize="10"
+                                ToolTip="Zamknij panel"
+                                Click="CloseSettingsPanelButton_Click" />
+                    </Grid>
+
+                    <TextBlock Grid.Row="1"
+                               Text="Wybierz z listy atrybuty, które mają być używane przy tworzeniu nowych przekrojów."
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,12" />
+
+                    <StackPanel Grid.Row="2">
+                        <TextBlock Text="ViewAttributeName"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   FontSize="11"
+                                   Margin="0,0,0,4" />
+
+                        <ComboBox x:Name="ViewAttributeNameComboBox"
+                                  Height="32"
+                                  Margin="0,0,0,10"
+                                  Padding="6,4"
+                                  Background="{DynamicResource ControlBgBrush}"
+                                  BorderBrush="{DynamicResource DividerColorBrush}"
+                                  BorderThickness="1"
+                                  Foreground="{DynamicResource TextPrimaryBrush}"
+                                  FontSize="12"
+                                  IsEditable="False"
+                                  IsTextSearchEnabled="True" />
+
+                        <TextBlock Text="MarkAttributeName"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   FontSize="11"
+                                   Margin="0,0,0,4" />
+
+                        <ComboBox x:Name="MarkAttributeNameComboBox"
+                                  Height="32"
+                                  Margin="0,0,0,12"
+                                  Padding="6,4"
+                                  Background="{DynamicResource ControlBgBrush}"
+                                  BorderBrush="{DynamicResource DividerColorBrush}"
+                                  BorderThickness="1"
+                                  Foreground="{DynamicResource TextPrimaryBrush}"
+                                  FontSize="12"
+                                  IsEditable="False"
+                                  IsTextSearchEnabled="True" />
+
+                        <Button x:Name="RefreshSectionSettingsButton"
+                                Content="Odśwież listę"
+                                Style="{StaticResource SecondaryButton}"
+                                HorizontalAlignment="Stretch"
+                                Height="32"
+                                Margin="0,0,0,8"
+                                Click="RefreshSectionSettingsButton_Click" />
+
+                        <Button x:Name="ApplySectionSettingsButton"
+                                Content="Zastosuj"
+                                Style="{StaticResource PrimaryButton}"
+                                HorizontalAlignment="Stretch"
+                                Height="32"
+                                Click="ApplySectionSettingsButton_Click" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
             <StackPanel Grid.Row="1"
-                        Grid.Column="0"
+                        Grid.Column="1"
                         Margin="14,10,14,14">
 
                 <TextBlock Text="KRAWĘDZIE"
@@ -321,7 +427,7 @@
 
             <Border x:Name="SidePanelBorder"
                     Grid.Row="1"
-                    Grid.Column="1"
+                    Grid.Column="2"
                     Visibility="Collapsed"
                     BorderBrush="{DynamicResource DividerColorBrush}"
                     BorderThickness="1,0,0,0">

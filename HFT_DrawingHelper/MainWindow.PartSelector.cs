@@ -25,7 +25,7 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
-            var drawingParts = GetSelectedDrawingParts(drawingHandler);
+            var drawingParts = FilterIgnoredSectionDrawingParts(GetSelectedDrawingParts(drawingHandler));
 
             _partItems.Clear();
             _partGroups.Clear();

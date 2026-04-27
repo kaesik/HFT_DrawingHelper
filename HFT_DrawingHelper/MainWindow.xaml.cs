@@ -935,7 +935,7 @@ namespace HFT_DrawingHelper {
         }
 
         private static List<SelectableEdgeGroup> BuildSelectableEdgeGroups(TSD.DrawingHandler drawingHandler) {
-            var selectedDrawingParts = GetSelectedDrawingParts(drawingHandler);
+            var selectedDrawingParts = FilterIgnoredSectionDrawingParts(GetSelectedDrawingParts(drawingHandler));
             TSD.View targetView = null;
 
             if (selectedDrawingParts.Count > 0) {
@@ -1100,6 +1100,7 @@ namespace HFT_DrawingHelper {
                 try {
                     var modelObject = MyModel.SelectModelObject(identifier);
                     if (!(modelObject is TSM.Part modelPart)) continue;
+                    if (ShouldIgnoreSectionModelPart(modelPart)) continue;
 
                     modelParts.Add(modelPart);
                 }
@@ -1109,6 +1110,45 @@ namespace HFT_DrawingHelper {
             }
 
             return modelParts;
+        }
+
+
+        private static List<DrawingPartWithBounds> FilterIgnoredSectionDrawingParts(
+            List<DrawingPartWithBounds> drawingParts
+        ) {
+            if (drawingParts == null || drawingParts.Count == 0)
+                return new List<DrawingPartWithBounds>();
+
+            return drawingParts
+                .Where(drawingPart => !ShouldIgnoreSectionDrawingPart(drawingPart))
+                .ToList();
+        }
+
+        private static bool ShouldIgnoreSectionDrawingPart(DrawingPartWithBounds drawingPartWithBounds) {
+            return drawingPartWithBounds == null || ShouldIgnoreSectionDrawingPart(drawingPartWithBounds.DrawingPart);
+        }
+
+        private static bool ShouldIgnoreSectionDrawingPart(TSD.Part drawingPart) {
+            if (drawingPart == null) return true;
+            if (drawingPart.ModelIdentifier == null) return false;
+
+            try {
+                var modelObject = MyModel.SelectModelObject(drawingPart.ModelIdentifier);
+                return modelObject is TSM.Part modelPart && ShouldIgnoreSectionModelPart(modelPart);
+            }
+            catch {
+                return false;
+            }
+        }
+
+        private static bool ShouldIgnoreSectionModelPart(TSM.Part modelPart) {
+            if (modelPart == null) return true;
+
+            var name = modelPart.Name;
+            if (string.IsNullOrWhiteSpace(name)) return false;
+
+            var normalizedName = name.Trim().ToUpperInvariant();
+            return normalizedName.StartsWith("WS") || normalizedName.StartsWith("MS");
         }
 
         private static List<DrawingPartWithBounds> GetDrawingPartsFromView(TSD.View drawingView) {
@@ -1123,6 +1163,7 @@ namespace HFT_DrawingHelper {
             while (drawingObjects.MoveNext()) {
                 if (!(drawingObjects.Current is TSD.Part drawingPart)) continue;
                 if (drawingPart.Hideable != null && drawingPart.Hideable.IsHidden) continue;
+                if (ShouldIgnoreSectionDrawingPart(drawingPart)) continue;
 
                 var identifier = drawingPart.ModelIdentifier;
                 if (identifier == null) continue;

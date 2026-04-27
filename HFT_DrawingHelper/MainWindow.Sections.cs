@@ -19,16 +19,18 @@ namespace HFT_DrawingHelper {
             var pickedView = GetSelectedViewOrShowMessage(drawingHandler);
             if (pickedView == null) return;
 
-            var drawingParts = GetSelectedDrawingParts(drawingHandler);
+            var drawingParts = FilterIgnoredSectionDrawingParts(GetSelectedDrawingParts(drawingHandler));
             TSD.View commonView;
 
             if (drawingParts.Count == 0) {
-                var singleDrawingPart = GetSingleDrawingPartFromPickedView(pickedView);
-                if (singleDrawingPart == null) {
+                var partsFromPickedView = GetDrawingPartsFromView(pickedView);
+                if (partsFromPickedView.Count != 1) {
                     MessageBox.Show(
                         "Jeśli nie zaznaczasz elementu, wskazany widok musi zawierać dokładnie jeden element typu Part.");
                     return;
                 }
+
+                var singleDrawingPart = partsFromPickedView[0];
 
                 drawingParts = new List<DrawingPartWithBounds> {
                     singleDrawingPart
@@ -48,7 +50,7 @@ namespace HFT_DrawingHelper {
                 }
             }
 
-            if (!HasExactlyOnePart(commonView)) {
+            if (GetDrawingPartsFromView(commonView).Count != 1) {
                 MessageBox.Show(
                     "Przekroje można tworzyć tylko dla widoku zawierającego dokładnie jeden element typu Part.");
                 return;
@@ -265,8 +267,8 @@ namespace HFT_DrawingHelper {
 
         #region Constants
 
-        private const string DefaultViewAttributeName = "#HFT_Kant_Section";
-        private const string DefaultMarkAttributeName = "#HFT_SECTION_V";
+        private const string DefaultViewAttributeName = "standard";
+        private const string DefaultMarkAttributeName = "standard";
         private static string _viewAttributeName = DefaultViewAttributeName;
         private static string _markAttributeName = DefaultMarkAttributeName;
         private const double DepthUp = 1.0;

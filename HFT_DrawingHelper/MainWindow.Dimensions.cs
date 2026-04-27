@@ -32,18 +32,19 @@ namespace HFT_DrawingHelper {
                 if (allPartsBounds == null) return null;
 
                 var elementEndpointsFromView = outlineSnapshotsFromView
-                    .Where(snapshot => snapshot?.Vertices != null && snapshot.Vertices.Count > 0)
                     .Select(snapshot => new ElementEndpointsSnapshot {
-                        Bounds = snapshot.Bounds,
-                        Endpoints = snapshot.Vertices
+                        Bounds = snapshot?.Bounds,
+                        Endpoints = snapshot?.Vertices?
                             .Select(point => new TSG.Point(point.X, point.Y, 0))
-                            .ToList()
+                            .ToList() ?? new List<TSG.Point>(),
+                        ReferencePoints = BuildDimensionReferencePoints(snapshot)
                     })
+                    .Where(element => HasEndpoints(element) || HasReferencePoints(element))
                     .ToList();
 
                 var mergedEndpointsFromView = elementEndpointsFromView
-                    .Where(element => element?.Endpoints != null)
-                    .SelectMany(element => element.Endpoints)
+                    .Where(element => HasReferencePoints(element) || HasEndpoints(element))
+                    .SelectMany(GetElementDimensionPoints)
                     .ToList();
 
                 mergedEndpointsFromView.AddRange(GetLineAndPolylineEndpoints(selectedView));
@@ -93,18 +94,19 @@ namespace HFT_DrawingHelper {
             if (allOutlineSnapshotsFromView == null || allOutlineSnapshotsFromView.Count == 0) return null;
 
             var allElementEndpointsFromView = allOutlineSnapshotsFromView
-                .Where(snapshot => snapshot?.Vertices != null && snapshot.Vertices.Count > 0)
                 .Select(snapshot => new ElementEndpointsSnapshot {
-                    Bounds = snapshot.Bounds,
-                    Endpoints = snapshot.Vertices
+                    Bounds = snapshot?.Bounds,
+                    Endpoints = snapshot?.Vertices?
                         .Select(point => new TSG.Point(point.X, point.Y, 0))
-                        .ToList()
+                        .ToList() ?? new List<TSG.Point>(),
+                    ReferencePoints = BuildDimensionReferencePoints(snapshot)
                 })
+                .Where(element => HasEndpoints(element) || HasReferencePoints(element))
                 .ToList();
 
             var allMergedEndpointsFromView = allElementEndpointsFromView
-                .Where(element => element?.Endpoints != null)
-                .SelectMany(element => element.Endpoints)
+                .Where(element => HasReferencePoints(element) || HasEndpoints(element))
+                .SelectMany(GetElementDimensionPoints)
                 .ToList();
 
             allMergedEndpointsFromView.AddRange(GetLineAndPolylineEndpoints(selectedViewFromParts));
@@ -114,18 +116,19 @@ namespace HFT_DrawingHelper {
             );
 
             var elementEndpoints = outlineSnapshots
-                .Where(snapshot => snapshot?.Vertices != null && snapshot.Vertices.Count > 0)
                 .Select(snapshot => new ElementEndpointsSnapshot {
-                    Bounds = snapshot.Bounds,
-                    Endpoints = snapshot.Vertices
+                    Bounds = snapshot?.Bounds,
+                    Endpoints = snapshot?.Vertices?
                         .Select(point => new TSG.Point(point.X, point.Y, 0))
-                        .ToList()
+                        .ToList() ?? new List<TSG.Point>(),
+                    ReferencePoints = BuildDimensionReferencePoints(snapshot)
                 })
+                .Where(element => HasEndpoints(element) || HasReferencePoints(element))
                 .ToList();
 
             var mergedEndpoints = elementEndpoints
-                .Where(element => element?.Endpoints != null)
-                .SelectMany(element => element.Endpoints)
+                .Where(element => HasReferencePoints(element) || HasEndpoints(element))
+                .SelectMany(GetElementDimensionPoints)
                 .ToList();
 
             mergedEndpoints = RemoveDuplicatePointsByDistance(
@@ -175,6 +178,7 @@ namespace HFT_DrawingHelper {
                 activeDrawing.CommitChanges();
             }
             catch {
+                // ignored
             }
         }
 
@@ -277,7 +281,7 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
-            foreach (var element in snapshot.ElementEndpoints.Where(HasEndpoints)) {
+            foreach (var element in snapshot.ElementEndpoints.Where(HasDimensionPoints)) {
                 var curvedPoints = GetCurvedDimensionReferencePoints(
                     snapshot,
                     options,
@@ -310,6 +314,28 @@ namespace HFT_DrawingHelper {
             return element?.Endpoints != null && element.Endpoints.Count > 0;
         }
 
+        private static bool HasDimensionPoints(ElementEndpointsSnapshot element) {
+            return HasReferencePoints(element) || HasEndpoints(element);
+        }
+
+        private static bool HasReferencePoints(ElementEndpointsSnapshot element) {
+            return element?.ReferencePoints != null && element.ReferencePoints.Count > 0;
+        }
+
+        private static List<TSG.Point> GetElementDimensionPoints(ElementEndpointsSnapshot element) {
+            if (HasReferencePoints(element))
+                return element.ReferencePoints
+                    .Where(point => point != null)
+                    .Select(point => new TSG.Point(point.X, point.Y, 0))
+                    .ToList();
+
+            return element?.Endpoints?
+                .Where(point => point != null)
+                .Select(point => new TSG.Point(point.X, point.Y, 0))
+                .ToList() ?? new List<TSG.Point>();
+        }
+
+
         private static IEnumerable<ElementEndpointsSnapshot> GetTargetElements(
             DimensionGeometrySnapshot snapshot,
             DimensionOptions options
@@ -319,23 +345,12 @@ namespace HFT_DrawingHelper {
 
             return options.IsOverall
                 ? new ElementEndpointsSnapshot[] { null }
-                : snapshot.ElementEndpoints.Where(HasEndpoints);
+                : snapshot.ElementEndpoints.Where(HasDimensionPoints);
         }
 
         private static PartBounds GetElementLocalBounds(ElementEndpointsSnapshot element) {
-            return GetBoundsFromPoints(element?.Endpoints);
-        }
-
-        private static List<TSG.Point> GetAssemblyCornerCandidates(PartBounds bounds) {
-            if (bounds == null)
-                return new List<TSG.Point>();
-
-            return new List<TSG.Point> {
-                new TSG.Point(bounds.MinX, bounds.MinY, 0),
-                new TSG.Point(bounds.MinX, bounds.MaxY, 0),
-                new TSG.Point(bounds.MaxX, bounds.MinY, 0),
-                new TSG.Point(bounds.MaxX, bounds.MaxY, 0)
-            };
+            var points = GetElementDimensionPoints(element);
+            return GetBoundsFromPoints(points);
         }
 
         private static List<TSG.Point> GetSignificantOutlineReferencePoints(
@@ -495,80 +510,6 @@ namespace HFT_DrawingHelper {
             );
         }
 
-        private static List<Tuple<TSG.Point, TSG.Point>> GetClosedOutlineSegments(
-            IEnumerable<TSG.Point> points
-        ) {
-            var result = new List<Tuple<TSG.Point, TSG.Point>>();
-            var vertices = points?
-                .Where(p => p != null)
-                .Select(p => new TSG.Point(p.X, p.Y, 0))
-                .ToList() ?? new List<TSG.Point>();
-
-            if (vertices.Count < 2)
-                return result;
-
-            for (var i = 0; i < vertices.Count - 1; i++)
-                result.Add(Tuple.Create(vertices[i], vertices[i + 1]));
-
-            if (vertices.Count > 2 && !ArePointsClose2D(vertices[0], vertices[vertices.Count - 1]))
-                result.Add(Tuple.Create(vertices[vertices.Count - 1], vertices[0]));
-
-            return result;
-        }
-
-        private static TSG.Point InterpolatePointOnSegment(
-            TSG.Point startPoint,
-            TSG.Point endPoint,
-            double parameter
-        ) {
-            return new TSG.Point(
-                startPoint.X + (endPoint.X - startPoint.X) * parameter,
-                startPoint.Y + (endPoint.Y - startPoint.Y) * parameter,
-                0
-            );
-        }
-
-        private static List<TSG.Point> GetStraightBoundaryPointsAtTargetAxis(
-            IEnumerable<ElementEndpointsSnapshot> elements,
-            double targetAxisValue,
-            bool isHorizontal
-        ) {
-            var result = new List<TSG.Point>();
-            if (elements == null)
-                return result;
-
-            foreach (var element in elements.Where(HasEndpoints))
-            foreach (var segment in GetClosedOutlineSegments(element.Endpoints)) {
-                var s = segment.Item1;
-                var e2 = segment.Item2;
-
-                var sAxis = isHorizontal ? s.X : s.Y;
-                var eAxis = isHorizontal ? e2.X : e2.Y;
-
-                if (Math.Abs(sAxis - targetAxisValue) <= DimensionMergeToleranceMillimeters &&
-                    Math.Abs(eAxis - targetAxisValue) <= DimensionMergeToleranceMillimeters) {
-                    result.Add(new TSG.Point(s.X, s.Y, 0));
-                    result.Add(new TSG.Point(e2.X, e2.Y, 0));
-                    continue;
-                }
-
-                var minAxis = Math.Min(sAxis, eAxis);
-                var maxAxis = Math.Max(sAxis, eAxis);
-                if (targetAxisValue < minAxis - DimensionMergeToleranceMillimeters ||
-                    targetAxisValue > maxAxis + DimensionMergeToleranceMillimeters)
-                    continue;
-
-                var axisDelta = eAxis - sAxis;
-                if (Math.Abs(axisDelta) <= DimensionMergeToleranceMillimeters)
-                    continue;
-
-                var t = Math.Max(0.0, Math.Min(1.0, (targetAxisValue - sAxis) / axisDelta));
-                result.Add(InterpolatePointOnSegment(s, e2, t));
-            }
-
-            return RemoveDuplicatePointsByDistance(result, DimensionMergeToleranceMillimeters);
-        }
-
         private static TSG.Point SelectClosestStraightActualPointForTarget(
             IEnumerable<TSG.Point> candidates,
             double targetAxisValue,
@@ -610,8 +551,8 @@ namespace HFT_DrawingHelper {
             var bounds = snapshot.AllPartsBounds;
 
             var candidates = candidateElements
-                .Where(HasEndpoints)
-                .SelectMany(element => GetSignificantOutlineReferencePoints(element.Endpoints))
+                .Where(HasDimensionPoints)
+                .SelectMany(GetElementDimensionPoints)
                 .ToList();
 
             candidates = RemoveDuplicatePointsByDistance(
@@ -702,10 +643,10 @@ namespace HFT_DrawingHelper {
                 return new List<TSG.Point>();
 
             var candidates = candidateElements
-                .Where(HasEndpoints)
+                .Where(HasDimensionPoints)
                 .SelectMany(element => {
                     var elementBounds = GetElementLocalBounds(element);
-                    var elementReferencePoints = GetSignificantOutlineReferencePoints(element.Endpoints);
+                    var elementReferencePoints = GetElementDimensionPoints(element);
                     return GetAngledPointsFromSelectedHalf(elementReferencePoints, elementBounds, options);
                 })
                 .Select(point => new TSG.Point(point.X, point.Y, 0))
@@ -910,14 +851,14 @@ namespace HFT_DrawingHelper {
 
             if (element != null) {
                 var localBounds = GetElementLocalBounds(element);
-                var elementReferencePoints = GetSignificantOutlineReferencePoints(element.Endpoints);
+                var elementReferencePoints = GetElementDimensionPoints(element);
                 points.AddRange(GetStraightSidePoints(elementReferencePoints, localBounds, options));
             }
             else
-                foreach (var currentElement in snapshot.ElementEndpoints.Where(e => e?.Endpoints != null)) {
+                foreach (var currentElement in snapshot.ElementEndpoints.Where(HasDimensionPoints)) {
                     var currentBounds = GetElementLocalBounds(currentElement);
                     var currentReferencePoints =
-                        GetSignificantOutlineReferencePoints(currentElement.Endpoints);
+                        GetElementDimensionPoints(currentElement);
                     points.AddRange(GetStraightSidePoints(currentReferencePoints, currentBounds, options));
                 }
 
@@ -1003,11 +944,10 @@ namespace HFT_DrawingHelper {
             var result = new List<TSG.Point>();
             var allFilteredPoints = new List<TSG.Point>();
 
-            foreach (var currentElement in snapshot.ElementEndpoints.Where(currentElement =>
-                         currentElement?.Endpoints != null)) {
+            foreach (var currentElement in snapshot.ElementEndpoints.Where(HasDimensionPoints)) {
                 var currentBounds = GetElementLocalBounds(currentElement);
                 var filteredPoints = FilterPointsBySelectedSide(
-                    currentElement.Endpoints,
+                    GetElementDimensionPoints(currentElement),
                     currentBounds,
                     options,
                     curvedSideSelectionMode
@@ -1026,7 +966,7 @@ namespace HFT_DrawingHelper {
             if (element != null) {
                 var elementBounds = GetElementLocalBounds(element);
                 var filteredElementPoints = FilterPointsBySelectedSide(
-                    element.Endpoints,
+                    GetElementDimensionPoints(element),
                     elementBounds,
                     options,
                     curvedSideSelectionMode
@@ -1167,14 +1107,14 @@ namespace HFT_DrawingHelper {
 
             if (element != null) {
                 var elementBounds = GetElementLocalBounds(element);
-                var elementReferencePoints = GetSignificantOutlineReferencePoints(element.Endpoints);
+                var elementReferencePoints = GetElementDimensionPoints(element);
                 points.AddRange(GetAngledSidePoints(elementReferencePoints, elementBounds, options));
             }
             else
-                foreach (var currentElement in snapshot.ElementEndpoints.Where(e => e?.Endpoints != null)) {
+                foreach (var currentElement in snapshot.ElementEndpoints.Where(HasDimensionPoints)) {
                     var currentBounds = GetElementLocalBounds(currentElement);
                     var currentReferencePoints =
-                        GetSignificantOutlineReferencePoints(currentElement.Endpoints);
+                        GetElementDimensionPoints(currentElement);
                     points.AddRange(GetAngledSidePoints(currentReferencePoints, currentBounds, options));
                 }
 
@@ -1231,46 +1171,6 @@ namespace HFT_DrawingHelper {
                 pointList.Add(new TSG.Point(point.X, point.Y, 0));
 
             return pointList;
-        }
-
-        private static List<TSG.Point> CollectPath(
-            List<TSG.Point> points,
-            int startIndex,
-            int endIndex,
-            bool forward
-        ) {
-            var result = new List<TSG.Point>();
-            if (points == null || points.Count == 0)
-                return result;
-
-            var index = startIndex;
-            result.Add(new TSG.Point(points[index].X, points[index].Y, 0));
-
-            while (index != endIndex) {
-                index = forward
-                    ? (index + 1) % points.Count
-                    : (index - 1 + points.Count) % points.Count;
-
-                result.Add(new TSG.Point(points[index].X, points[index].Y, 0));
-
-                if (result.Count > points.Count + 1)
-                    break;
-            }
-
-            return result;
-        }
-
-        private static double GetAverageSideValue(
-            IEnumerable<TSG.Point> points,
-            DimensionOptions options,
-            TSG.Vector sideNormal
-        ) {
-            var validPoints = points?.Where(point => point != null).ToList() ?? new List<TSG.Point>();
-            if (validPoints.Count == 0 || options == null || sideNormal == null)
-                return double.MinValue;
-
-            return validPoints.Average(point =>
-                GetProjectedCoordinate(point, options.UserVectorStart, sideNormal));
         }
 
         private static double GetProjectedCoordinate(
@@ -1651,6 +1551,7 @@ namespace HFT_DrawingHelper {
         private sealed class ElementEndpointsSnapshot {
             public PartBounds Bounds { get; set; }
             public List<TSG.Point> Endpoints { get; set; }
+            public List<TSG.Point> ReferencePoints { get; set; }
         }
 
         private sealed class DimensionGeometrySnapshot {
@@ -1664,7 +1565,6 @@ namespace HFT_DrawingHelper {
         }
 
         private sealed class ProjectedPoint {
-            public int Index { get; set; }
             public TSG.Point Point { get; set; }
             public double AxisValue { get; set; }
             public double SideValue { get; set; }

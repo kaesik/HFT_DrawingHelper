@@ -15,10 +15,12 @@ namespace HFT_DrawingHelper {
         private const double SignificantCornerAngleDegrees = 15.0;
         private const double NearStraightAngleDegrees = 170.0;
         private const double JoinToleranceMillimeters = 0.5;
+        private const double BoundarySideOffsetMillimeters = 0.75;
         private const double MinimumNumberedEdgeLengthMillimeters = 100.0;
         private const double MinimumPartSizeForDimensionMillimeters = 10.0;
         private const int MaximumInlineEdgeCount = 10;
         private const double NumberOffsetMillimeters = 5.0;
+        private const double SmallGapJoinToleranceMillimeters = 10.0;
 
         #endregion
 
@@ -55,6 +57,28 @@ namespace HFT_DrawingHelper {
         private sealed class PolylineGroup {
             public List<EdgeSegment> EdgeSegments { get; } = new List<EdgeSegment>();
             public List<TSG.Point> PolylinePoints { get; } = new List<TSG.Point>();
+        }
+
+        private sealed class SegmentEndpointReference {
+            public OutlineSegmentGroup SegmentGroup { get; set; }
+            public bool IsStartPoint { get; set; }
+
+            public TSG.Point GetPoint() {
+                if (SegmentGroup?.Points == null || SegmentGroup.Points.Count == 0)
+                    return null;
+
+                return IsStartPoint
+                    ? SegmentGroup.Points[0]
+                    : SegmentGroup.Points[SegmentGroup.Points.Count - 1];
+            }
+
+            public void SetPoint(TSG.Point point) {
+                if (SegmentGroup?.Points == null || SegmentGroup.Points.Count == 0 || point == null)
+                    return;
+
+                var index = IsStartPoint ? 0 : SegmentGroup.Points.Count - 1;
+                SegmentGroup.Points[index] = new TSG.Point(point.X, point.Y, 0);
+            }
         }
 
         private sealed class NumberedEdgeGroup {
@@ -313,22 +337,26 @@ namespace HFT_DrawingHelper {
                         Vertices = new List<TSG.Point>()
                     };
 
-                    foreach (var boundaryPath in boundaryPaths) {
-                        var preparedPath = PrepareBoundaryPath(boundaryPath);
-                        if (preparedPath == null || preparedPath.Count < 2) continue;
+                    var primaryBoundaryPath = SelectPrimaryOuterBoundaryPath(boundaryPaths);
+                    if (primaryBoundaryPath == null || primaryBoundaryPath.Count < 2)
+                        continue;
 
-                        var vertices = new List<TSG.Point>(preparedPath.Select(point =>
-                            new TSG.Point(point.X, point.Y, 0)
-                        ));
+                    var vertices = primaryBoundaryPath
+                        .Select(point => new TSG.Point(point.X, point.Y, 0))
+                        .ToList();
 
-                        if (snapshot.Vertices.Count == 0 ||
-                            ComputePolylineLength(vertices) > ComputePolylineLength(snapshot.Vertices))
-                            snapshot.Vertices = vertices.Select(point => new TSG.Point(point.X, point.Y, 0)).ToList();
+                    snapshot.Vertices = vertices
+                        .Select(point => new TSG.Point(point.X, point.Y, 0))
+                        .ToList();
 
-                        var segmentGroups = BuildOutlineSegmentGroups(vertices);
-                        foreach (var group in segmentGroups)
-                            snapshot.SegmentGroups.Add(group);
-                    }
+                    var segmentGroups = BuildOutlineSegmentGroups(vertices);
+                    foreach (var group in segmentGroups)
+                        snapshot.SegmentGroups.Add(group);
+
+                    CloseSmallGapsInSegmentGroups(
+                        snapshot.SegmentGroups,
+                        SmallGapJoinToleranceMillimeters
+                    );
 
                     if (snapshot.SegmentGroups.Count == 0) continue;
                     if (snapshot.Vertices == null || snapshot.Vertices.Count == 0)
@@ -347,6 +375,491 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
+        private static void CloseSmallGapsInSegmentGroups(
+            List<OutlineSegmentGroup> segmentGroups,
+            double toleranceMillimeters
+        ) {
+            if (segmentGroups == null || segmentGroups.Count == 0)
+                return;
+
+            SnapNearbySegmentEndpoints(segmentGroups, toleranceMillimeters);
+            SnapSegmentEndpointsToNearestSegments(segmentGroups, toleranceMillimeters);
+            NormalizeSegmentGroups(segmentGroups);
+            MergeSegmentGroupsByInsignificantAngle(
+                segmentGroups,
+                toleranceMillimeters,
+                NearStraightAngleDegrees
+            );
+            NormalizeSegmentGroups(segmentGroups);
+        }
+
+        private static void SnapNearbySegmentEndpoints(
+            List<OutlineSegmentGroup> segmentGroups,
+            double toleranceMillimeters
+        ) {
+            var endpointReferences = GetSegmentEndpointReferences(segmentGroups);
+            if (endpointReferences.Count < 2)
+                return;
+
+            var visited = new bool[endpointReferences.Count];
+
+            for (var index = 0; index < endpointReferences.Count; index++) {
+                if (visited[index])
+                    continue;
+
+                var clusterIndices = new List<int>();
+                var queue = new Queue<int>();
+
+                queue.Enqueue(index);
+                visited[index] = true;
+
+                while (queue.Count > 0) {
+                    var currentIndex = queue.Dequeue();
+                    clusterIndices.Add(currentIndex);
+
+                    var currentPoint = endpointReferences[currentIndex].GetPoint();
+                    if (currentPoint == null)
+                        continue;
+
+                    for (var candidateIndex = 0; candidateIndex < endpointReferences.Count; candidateIndex++) {
+                        if (visited[candidateIndex])
+                            continue;
+
+                        var candidatePoint = endpointReferences[candidateIndex].GetPoint();
+                        if (candidatePoint == null)
+                            continue;
+
+                        if (ComputeDistance2D(currentPoint, candidatePoint) > toleranceMillimeters)
+                            continue;
+
+                        visited[candidateIndex] = true;
+                        queue.Enqueue(candidateIndex);
+                    }
+                }
+
+                if (clusterIndices.Count < 2)
+                    continue;
+
+                var averageX = 0.0;
+                var averageY = 0.0;
+                var validPointsCount = 0;
+
+                foreach (var clusterIndex in clusterIndices) {
+                    var point = endpointReferences[clusterIndex].GetPoint();
+                    if (point == null)
+                        continue;
+
+                    averageX += point.X;
+                    averageY += point.Y;
+                    validPointsCount++;
+                }
+
+                if (validPointsCount < 2)
+                    continue;
+
+                var snappedPoint = new TSG.Point(
+                    averageX / validPointsCount,
+                    averageY / validPointsCount,
+                    0
+                );
+
+                foreach (var clusterIndex in clusterIndices)
+                    endpointReferences[clusterIndex].SetPoint(snappedPoint);
+            }
+        }
+
+        private static void SnapSegmentEndpointsToNearestSegments(
+            List<OutlineSegmentGroup> segmentGroups,
+            double toleranceMillimeters
+        ) {
+            var endpointReferences = GetSegmentEndpointReferences(segmentGroups);
+            if (endpointReferences.Count == 0)
+                return;
+
+            foreach (var endpointReference in endpointReferences) {
+                var currentPoint = endpointReference.GetPoint();
+                if (currentPoint == null)
+                    continue;
+
+                var bestDistance = double.MaxValue;
+                TSG.Point bestPoint = null;
+
+                foreach (var segmentGroup in segmentGroups.Where(group =>
+                             group?.Points != null && group.Points.Count >= 2))
+                    for (var index = 0; index < segmentGroup.Points.Count - 1; index++) {
+                        var segmentStartPoint = segmentGroup.Points[index];
+                        var segmentEndPoint = segmentGroup.Points[index + 1];
+
+                        if (segmentStartPoint == null || segmentEndPoint == null)
+                            continue;
+
+                        if (ReferenceEquals(segmentGroup, endpointReference.SegmentGroup)) {
+                            var isOwnStartSegment = endpointReference.IsStartPoint && index == 0;
+                            var isOwnEndSegment = !endpointReference.IsStartPoint &&
+                                                  index == segmentGroup.Points.Count - 2;
+
+                            if (isOwnStartSegment || isOwnEndSegment)
+                                continue;
+                        }
+
+                        var closestPoint = GetClosestPointOnSegment2D(
+                            currentPoint,
+                            segmentStartPoint,
+                            segmentEndPoint
+                        );
+
+                        if (closestPoint == null)
+                            continue;
+
+                        var distance = ComputeDistance2D(currentPoint, closestPoint);
+                        if (distance <= DuplicateToleranceMillimeters ||
+                            distance > toleranceMillimeters ||
+                            distance >= bestDistance)
+                            continue;
+
+                        bestDistance = distance;
+                        bestPoint = closestPoint;
+                    }
+
+                if (bestPoint != null)
+                    endpointReference.SetPoint(bestPoint);
+            }
+        }
+
+        private static void NormalizeSegmentGroups(List<OutlineSegmentGroup> segmentGroups) {
+            if (segmentGroups == null || segmentGroups.Count == 0)
+                return;
+
+            var groupsToRemove = new List<OutlineSegmentGroup>();
+
+            foreach (var segmentGroup in segmentGroups) {
+                if (segmentGroup?.Points == null)
+                    continue;
+
+                var normalizedPoints = RemoveSequentialDuplicatePoints(segmentGroup.Points);
+                normalizedPoints = RemoveNearDuplicates(normalizedPoints, DuplicateToleranceMillimeters);
+
+                if (normalizedPoints == null || normalizedPoints.Count < 2) {
+                    groupsToRemove.Add(segmentGroup);
+                    continue;
+                }
+
+                segmentGroup.Points.Clear();
+                foreach (var normalizedPoint in normalizedPoints)
+                    segmentGroup.Points.Add(new TSG.Point(normalizedPoint.X, normalizedPoint.Y, 0));
+            }
+
+            foreach (var groupToRemove in groupsToRemove)
+                segmentGroups.Remove(groupToRemove);
+        }
+
+        private static void MergeSegmentGroupsByInsignificantAngle(
+            List<OutlineSegmentGroup> segmentGroups,
+            double joinToleranceMillimeters,
+            double nearStraightAngleDegrees
+        ) {
+            if (segmentGroups == null || segmentGroups.Count < 2)
+                return;
+
+            var merged = true;
+
+            while (merged) {
+                merged = false;
+
+                for (var firstIndex = 0; firstIndex < segmentGroups.Count; firstIndex++) {
+                    var firstGroup = segmentGroups[firstIndex];
+                    if (firstGroup?.Points == null || firstGroup.Points.Count < 2)
+                        continue;
+
+                    for (var secondIndex = firstIndex + 1; secondIndex < segmentGroups.Count; secondIndex++) {
+                        var secondGroup = segmentGroups[secondIndex];
+                        if (secondGroup?.Points == null || secondGroup.Points.Count < 2)
+                            continue;
+
+                        if (!TryMergeSegmentGroups(
+                                firstGroup,
+                                secondGroup,
+                                joinToleranceMillimeters,
+                                nearStraightAngleDegrees,
+                                out var mergedGroup))
+                            continue;
+
+                        segmentGroups.RemoveAt(secondIndex);
+                        segmentGroups.RemoveAt(firstIndex);
+                        segmentGroups.Add(mergedGroup);
+
+                        merged = true;
+                        break;
+                    }
+
+                    if (merged)
+                        break;
+                }
+            }
+        }
+
+        private static bool TryMergeSegmentGroups(
+            OutlineSegmentGroup firstGroup,
+            OutlineSegmentGroup secondGroup,
+            double joinToleranceMillimeters,
+            double nearStraightAngleDegrees,
+            out OutlineSegmentGroup mergedGroup
+        ) {
+            mergedGroup = null;
+
+            var firstPoints = ClonePoints(firstGroup?.Points);
+            var secondPoints = ClonePoints(secondGroup?.Points);
+
+            if (firstPoints == null || secondPoints == null || firstPoints.Count < 2 || secondPoints.Count < 2)
+                return false;
+
+            if (TryMergeSegmentGroupOrientation(
+                    firstPoints,
+                    secondPoints,
+                    joinToleranceMillimeters,
+                    nearStraightAngleDegrees,
+                    out mergedGroup))
+                return true;
+
+            if (TryMergeSegmentGroupOrientation(
+                    firstPoints,
+                    ReversePoints(secondPoints),
+                    joinToleranceMillimeters,
+                    nearStraightAngleDegrees,
+                    out mergedGroup))
+                return true;
+
+            if (TryMergeSegmentGroupOrientation(
+                    ReversePoints(firstPoints),
+                    secondPoints,
+                    joinToleranceMillimeters,
+                    nearStraightAngleDegrees,
+                    out mergedGroup))
+                return true;
+
+            return TryMergeSegmentGroupOrientation(
+                secondPoints,
+                firstPoints,
+                joinToleranceMillimeters,
+                nearStraightAngleDegrees,
+                out mergedGroup
+            );
+        }
+
+        private static bool TryMergeSegmentGroupOrientation(
+            List<TSG.Point> firstPath,
+            List<TSG.Point> secondPath,
+            double joinToleranceMillimeters,
+            double nearStraightAngleDegrees,
+            out OutlineSegmentGroup mergedGroup
+        ) {
+            mergedGroup = null;
+
+            if (firstPath == null || secondPath == null || firstPath.Count < 2 || secondPath.Count < 2)
+                return false;
+
+            var firstEndPoint = firstPath[firstPath.Count - 1];
+            var secondStartPoint = secondPath[0];
+
+            if (ComputeDistance2D(firstEndPoint, secondStartPoint) > joinToleranceMillimeters)
+                return false;
+
+            if (!ShouldMergeInsignificantCorner(
+                    firstPath,
+                    secondPath,
+                    joinToleranceMillimeters,
+                    nearStraightAngleDegrees))
+                return false;
+
+            var mergedPoints = BuildMergedPath(firstPath, secondPath);
+            mergedPoints = PrepareBoundaryPath(mergedPoints);
+
+            if (mergedPoints == null || mergedPoints.Count < 2)
+                return false;
+
+            mergedGroup = new OutlineSegmentGroup {
+                IsPolyline = mergedPoints.Count > 2
+            };
+
+            foreach (var mergedPoint in mergedPoints)
+                mergedGroup.Points.Add(new TSG.Point(mergedPoint.X, mergedPoint.Y, 0));
+
+            return true;
+        }
+
+        private static bool ShouldMergeInsignificantCorner(
+            List<TSG.Point> firstPath,
+            List<TSG.Point> secondPath,
+            double joinToleranceMillimeters,
+            double nearStraightAngleDegrees
+        ) {
+            if (firstPath == null || secondPath == null || firstPath.Count < 2 || secondPath.Count < 2)
+                return false;
+
+            var previousPoint = firstPath[firstPath.Count - 2];
+            var firstEndPoint = firstPath[firstPath.Count - 1];
+            var secondStartPoint = secondPath[0];
+            var nextPoint = secondPath[1];
+
+            if (ComputeDistance2D(firstEndPoint, secondStartPoint) > joinToleranceMillimeters)
+                return false;
+
+            var firstLength = ComputeDistance2D(previousPoint, firstEndPoint);
+            var secondLength = ComputeDistance2D(secondStartPoint, nextPoint);
+
+            if (firstLength <= joinToleranceMillimeters || secondLength <= joinToleranceMillimeters)
+                return true;
+
+            var connectionPoint = new TSG.Point(
+                (firstEndPoint.X + secondStartPoint.X) * 0.5,
+                (firstEndPoint.Y + secondStartPoint.Y) * 0.5,
+                0
+            );
+
+            var angleInDegrees = ComputeAngleInDegrees(
+                previousPoint,
+                connectionPoint,
+                nextPoint,
+                1e-6
+            );
+
+            return angleInDegrees >= nearStraightAngleDegrees;
+        }
+
+        private static List<TSG.Point> BuildMergedPath(
+            List<TSG.Point> firstPath,
+            List<TSG.Point> secondPath
+        ) {
+            var result = new List<TSG.Point>();
+            if (firstPath == null || secondPath == null || firstPath.Count == 0 || secondPath.Count == 0)
+                return result;
+
+            for (var index = 0; index < firstPath.Count - 1; index++)
+                result.Add(new TSG.Point(firstPath[index].X, firstPath[index].Y, 0));
+
+            var mergedConnectionPoint = new TSG.Point(
+                (firstPath[firstPath.Count - 1].X + secondPath[0].X) * 0.5,
+                (firstPath[firstPath.Count - 1].Y + secondPath[0].Y) * 0.5,
+                0
+            );
+
+            result.Add(mergedConnectionPoint);
+
+            for (var index = 1; index < secondPath.Count; index++)
+                result.Add(new TSG.Point(secondPath[index].X, secondPath[index].Y, 0));
+
+            return result;
+        }
+
+        private static List<TSG.Point> ClonePoints(IEnumerable<TSG.Point> points) {
+            var result = new List<TSG.Point>();
+            if (points == null)
+                return result;
+
+            foreach (var point in points) {
+                if (point == null)
+                    continue;
+
+                result.Add(new TSG.Point(point.X, point.Y, 0));
+            }
+
+            return result;
+        }
+
+        private static List<TSG.Point> ReversePoints(IEnumerable<TSG.Point> points) {
+            var result = ClonePoints(points);
+            result.Reverse();
+            return result;
+        }
+
+        private static List<SegmentEndpointReference> GetSegmentEndpointReferences(
+            List<OutlineSegmentGroup> segmentGroups
+        ) {
+            var result = new List<SegmentEndpointReference>();
+            if (segmentGroups == null)
+                return result;
+
+            foreach (var segmentGroup in segmentGroups.Where(group =>
+                         group?.Points != null && group.Points.Count >= 2)) {
+                result.Add(new SegmentEndpointReference {
+                    SegmentGroup = segmentGroup,
+                    IsStartPoint = true
+                });
+
+                result.Add(new SegmentEndpointReference {
+                    SegmentGroup = segmentGroup,
+                    IsStartPoint = false
+                });
+            }
+
+            return result;
+        }
+
+        private static TSG.Point GetClosestPointOnSegment2D(
+            TSG.Point point,
+            TSG.Point segmentStartPoint,
+            TSG.Point segmentEndPoint
+        ) {
+            if (point == null || segmentStartPoint == null || segmentEndPoint == null)
+                return null;
+
+            var segmentX = segmentEndPoint.X - segmentStartPoint.X;
+            var segmentY = segmentEndPoint.Y - segmentStartPoint.Y;
+            var segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+
+            if (segmentLengthSquared < 1e-12)
+                return new TSG.Point(segmentStartPoint.X, segmentStartPoint.Y, 0);
+
+            var t =
+                ((point.X - segmentStartPoint.X) * segmentX +
+                 (point.Y - segmentStartPoint.Y) * segmentY) / segmentLengthSquared;
+
+            if (t < 0.0) t = 0.0;
+            if (t > 1.0) t = 1.0;
+
+            return new TSG.Point(
+                segmentStartPoint.X + t * segmentX,
+                segmentStartPoint.Y + t * segmentY,
+                0
+            );
+        }
+
+        private static List<TSG.Point> BuildDimensionReferencePoints(PartOutlineSnapshot outlineSnapshot) {
+            var result = new List<TSG.Point>();
+            if (outlineSnapshot == null)
+                return result;
+
+            foreach (var segmentGroup in outlineSnapshot.SegmentGroups.Where(group =>
+                         group?.Points != null && group.Points.Count >= 2)) {
+                var groupPoints = RemoveSequentialDuplicatePoints(segmentGroup.Points);
+                groupPoints = RemoveNearDuplicates(groupPoints, DuplicateToleranceMillimeters);
+
+                if (groupPoints == null || groupPoints.Count == 0)
+                    continue;
+
+                result.Add(new TSG.Point(groupPoints[0].X, groupPoints[0].Y, 0));
+
+                if (groupPoints.Count > 1)
+                    result.Add(new TSG.Point(
+                        groupPoints[groupPoints.Count - 1].X,
+                        groupPoints[groupPoints.Count - 1].Y,
+                        0
+                    ));
+
+                if (groupPoints.Count > 2)
+                    result.AddRange(GetSignificantOutlineReferencePoints(groupPoints));
+                else
+                    foreach (var groupPoint in groupPoints)
+                        result.Add(new TSG.Point(groupPoint.X, groupPoint.Y, 0));
+            }
+
+            if (result.Count == 0 && outlineSnapshot.Vertices != null && outlineSnapshot.Vertices.Count > 0)
+                result.AddRange(GetSignificantOutlineReferencePoints(outlineSnapshot.Vertices));
+
+            return RemoveDuplicatePointsByDistance(result, DimensionMergeToleranceMillimeters);
+        }
+
+
         private static List<List<TSG.Point>> GetProjectedBoundaryPathsFromSolid(TSM.Solid solid) {
             var result = new List<List<TSG.Point>>();
             if (solid == null) return result;
@@ -363,15 +876,22 @@ namespace HFT_DrawingHelper {
             var boundarySegments = FilterBoundarySegments(splitSegments, faceLoops);
             if (boundarySegments.Count == 0) return result;
 
-            boundarySegments = RemoveInteriorChordSegments(boundarySegments);
-            if (boundarySegments.Count == 0) return result;
-
             var boundaryPaths = BuildBoundaryPathsFromSegments(boundarySegments);
+            if (boundaryPaths.Count == 0) return result;
+
+            boundaryPaths = JoinBoundaryPathsAcrossSmallGaps(boundaryPaths);
+            if (boundaryPaths.Count == 0) return result;
+
             foreach (var boundaryPath in boundaryPaths) {
                 var preparedPath = PrepareBoundaryPath(boundaryPath);
                 if (preparedPath != null && preparedPath.Count >= 2)
                     result.Add(preparedPath);
             }
+
+            result = JoinBoundaryPathsAcrossSmallGaps(result)
+                .Select(PrepareBoundaryPath)
+                .Where(path => path != null && path.Count >= 2)
+                .ToList();
 
             return RemoveInteriorBoundaryPaths(result);
         }
@@ -602,38 +1122,8 @@ namespace HFT_DrawingHelper {
                 var segmentLength = ComputeDistance2D(splitSegment.StartPoint, splitSegment.EndPoint);
                 if (segmentLength <= DuplicateToleranceMillimeters) continue;
 
-                var midpoint = new TSG.Point(
-                    (splitSegment.StartPoint.X + splitSegment.EndPoint.X) * 0.5,
-                    (splitSegment.StartPoint.Y + splitSegment.EndPoint.Y) * 0.5,
-                    0
-                );
-
-                var directionX = splitSegment.EndPoint.X - splitSegment.StartPoint.X;
-                var directionY = splitSegment.EndPoint.Y - splitSegment.StartPoint.Y;
-                var directionLength = Math.Sqrt(directionX * directionX + directionY * directionY);
-
-                if (directionLength < 1e-9) continue;
-
-                var normalX = -directionY / directionLength;
-                var normalY = directionX / directionLength;
-                var offset = Math.Max(0.25, Math.Min(1.0, segmentLength * 0.1));
-
-                var pointOnLeftSide = new TSG.Point(
-                    midpoint.X + normalX * offset,
-                    midpoint.Y + normalY * offset,
-                    0
-                );
-
-                var pointOnRightSide = new TSG.Point(
-                    midpoint.X - normalX * offset,
-                    midpoint.Y - normalY * offset,
-                    0
-                );
-
-                var leftInside = IsPointInsideProjectedSolid(pointOnLeftSide, faceLoops);
-                var rightInside = IsPointInsideProjectedSolid(pointOnRightSide, faceLoops);
-
-                if (leftInside == rightInside) continue;
+                if (!IsProjectedSegmentOnOutlineBoundary(splitSegment, faceLoops))
+                    continue;
 
                 result.Add(new ProjectedSegment2D {
                     StartPoint = new TSG.Point(splitSegment.StartPoint.X, splitSegment.StartPoint.Y, 0),
@@ -642,6 +1132,73 @@ namespace HFT_DrawingHelper {
             }
 
             return result;
+        }
+
+        private static bool IsProjectedSegmentOnOutlineBoundary(
+            ProjectedSegment2D splitSegment,
+            List<ProjectedFaceLoop> faceLoops
+        ) {
+            if (splitSegment == null || splitSegment.StartPoint == null || splitSegment.EndPoint == null)
+                return false;
+
+            var segmentLength = ComputeDistance2D(splitSegment.StartPoint, splitSegment.EndPoint);
+            if (segmentLength <= DuplicateToleranceMillimeters)
+                return false;
+
+            var directionX = splitSegment.EndPoint.X - splitSegment.StartPoint.X;
+            var directionY = splitSegment.EndPoint.Y - splitSegment.StartPoint.Y;
+            var directionLength = Math.Sqrt(directionX * directionX + directionY * directionY);
+
+            if (directionLength < 1e-9)
+                return false;
+
+            var normalX = -directionY / directionLength;
+            var normalY = directionX / directionLength;
+            var offset = Math.Max(0.15, Math.Min(BoundarySideOffsetMillimeters, segmentLength * 0.05));
+
+            var separatingSampleCount = 0;
+            var validSampleCount = 0;
+
+            foreach (var fraction in GetProjectedSegmentSampleFractions(segmentLength)) {
+                var samplePoint = new TSG.Point(
+                    splitSegment.StartPoint.X + (splitSegment.EndPoint.X - splitSegment.StartPoint.X) * fraction,
+                    splitSegment.StartPoint.Y + (splitSegment.EndPoint.Y - splitSegment.StartPoint.Y) * fraction,
+                    0
+                );
+
+                var pointOnLeftSide = new TSG.Point(
+                    samplePoint.X + normalX * offset,
+                    samplePoint.Y + normalY * offset,
+                    0
+                );
+
+                var pointOnRightSide = new TSG.Point(
+                    samplePoint.X - normalX * offset,
+                    samplePoint.Y - normalY * offset,
+                    0
+                );
+
+                var leftInside = IsPointInsideProjectedSolid(pointOnLeftSide, faceLoops);
+                var rightInside = IsPointInsideProjectedSolid(pointOnRightSide, faceLoops);
+
+                if (leftInside == rightInside)
+                    continue;
+
+                validSampleCount++;
+                separatingSampleCount++;
+            }
+
+            if (validSampleCount == 0)
+                return false;
+
+            return separatingSampleCount >= Math.Max(1, (int)Math.Ceiling(validSampleCount * 0.8));
+        }
+
+        private static List<double> GetProjectedSegmentSampleFractions(double segmentLength) {
+            if (segmentLength <= MinimumPartSizeForDimensionMillimeters * 0.5)
+                return new List<double> { 0.5 };
+
+            return new List<double> { 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.9 };
         }
 
         private static bool IsPointInsideProjectedSolid(TSG.Point point, List<ProjectedFaceLoop> faceLoops) {
@@ -656,137 +1213,115 @@ namespace HFT_DrawingHelper {
         }
 
 
-        private static List<ProjectedSegment2D> RemoveInteriorChordSegments(List<ProjectedSegment2D> boundarySegments) {
-            var result = new List<ProjectedSegment2D>();
-            if (boundarySegments == null || boundarySegments.Count == 0) return result;
+        private static List<List<TSG.Point>> JoinBoundaryPathsAcrossSmallGaps(List<List<TSG.Point>> boundaryPaths) {
+            var result = boundaryPaths?
+                .Where(path => path != null && path.Count >= 2)
+                .Select(path => path.Select(point => new TSG.Point(point.X, point.Y, 0)).ToList())
+                .ToList() ?? new List<List<TSG.Point>>();
 
-            var allPoints = boundarySegments
-                .SelectMany(segment => new[] { segment.StartPoint, segment.EndPoint })
-                .Where(point => point != null)
-                .Select(point => new TSG.Point(point.X, point.Y, 0))
-                .ToList();
+            if (result.Count <= 1)
+                return result;
 
-            var bounds = GetBoundsFromPoints(allPoints);
-            if (bounds == null) return boundarySegments;
+            var changed = true;
+            while (changed) {
+                changed = false;
 
-            var width = bounds.MaxX - bounds.MinX;
-            var height = bounds.MaxY - bounds.MinY;
+                for (var firstIndex = 0; firstIndex < result.Count && !changed; firstIndex++) {
+                    var firstPath = PrepareBoundaryPath(result[firstIndex]);
+                    if (firstPath == null || firstPath.Count < 2)
+                        continue;
 
-            if (width < MinimumPartSizeForDimensionMillimeters || height < DuplicateToleranceMillimeters * 2.0)
-                return boundarySegments;
+                    for (var secondIndex = firstIndex + 1; secondIndex < result.Count && !changed; secondIndex++) {
+                        var secondPath = PrepareBoundaryPath(result[secondIndex]);
+                        if (secondPath == null || secondPath.Count < 2)
+                            continue;
 
-            var envelope = BuildEnvelopeOutlineFromSegmentPoints(boundarySegments, width >= height);
-            envelope = PrepareBoundaryPath(envelope);
-            envelope = EnsureClosedOutline(envelope);
+                        if (!TryMergeBoundaryPaths(firstPath, secondPath, out var mergedPath))
+                            continue;
 
-            if (envelope == null || envelope.Count < 4)
-                return boundarySegments;
-
-            foreach (var segment in boundarySegments) {
-                if (segment == null || segment.StartPoint == null || segment.EndPoint == null)
-                    continue;
-
-                var midpoint = new TSG.Point(
-                    (segment.StartPoint.X + segment.EndPoint.X) * 0.5,
-                    (segment.StartPoint.Y + segment.EndPoint.Y) * 0.5,
-                    0
-                );
-
-                if (IsPointStrictlyInsidePolygon(midpoint, envelope))
-                    continue;
-
-                result.Add(new ProjectedSegment2D {
-                    StartPoint = new TSG.Point(segment.StartPoint.X, segment.StartPoint.Y, 0),
-                    EndPoint = new TSG.Point(segment.EndPoint.X, segment.EndPoint.Y, 0)
-                });
+                        result[firstIndex] = mergedPath;
+                        result.RemoveAt(secondIndex);
+                        changed = true;
+                    }
+                }
             }
 
-            return result.Count >= 2 ? result : boundarySegments;
+            return result
+                .Select(PrepareBoundaryPath)
+                .Where(path => path != null && path.Count >= 2)
+                .ToList();
         }
 
-        private static List<TSG.Point> BuildEnvelopeOutlineFromSegmentPoints(
-            List<ProjectedSegment2D> boundarySegments,
-            bool horizontalDominant
+        private static bool TryMergeBoundaryPaths(
+            List<TSG.Point> firstPath,
+            List<TSG.Point> secondPath,
+            out List<TSG.Point> mergedPath
         ) {
-            var sampledPoints = new List<TSG.Point>();
-            if (boundarySegments == null || boundarySegments.Count == 0) return sampledPoints;
+            mergedPath = null;
+            if (firstPath == null || secondPath == null || firstPath.Count < 2 || secondPath.Count < 2)
+                return false;
 
-            foreach (var segment in boundarySegments) {
-                if (segment == null || segment.StartPoint == null || segment.EndPoint == null)
-                    continue;
+            var candidates = new List<(double Distance, int CaseId)> {
+                (ComputeDistance2D(firstPath[firstPath.Count - 1], secondPath[0]), 0),
+                (ComputeDistance2D(firstPath[firstPath.Count - 1], secondPath[secondPath.Count - 1]), 1),
+                (ComputeDistance2D(firstPath[0], secondPath[0]), 2),
+                (ComputeDistance2D(firstPath[0], secondPath[secondPath.Count - 1]), 3)
+            };
 
-                sampledPoints.Add(new TSG.Point(segment.StartPoint.X, segment.StartPoint.Y, 0));
-                sampledPoints.Add(new TSG.Point(segment.EndPoint.X, segment.EndPoint.Y, 0));
-                sampledPoints.Add(new TSG.Point(
-                    (segment.StartPoint.X + segment.EndPoint.X) * 0.5,
-                    (segment.StartPoint.Y + segment.EndPoint.Y) * 0.5,
-                    0
-                ));
+            var bestCandidate = candidates
+                .OrderBy(candidate => candidate.Distance)
+                .First();
+
+            if (bestCandidate.Distance > SmallGapJoinToleranceMillimeters)
+                return false;
+
+            List<TSG.Point> normalizedFirstPath;
+            List<TSG.Point> normalizedSecondPath;
+
+            switch (bestCandidate.CaseId) {
+                case 0:
+                    normalizedFirstPath = ClonePoints(firstPath);
+                    normalizedSecondPath = ClonePoints(secondPath);
+                    break;
+                case 1:
+                    normalizedFirstPath = ClonePoints(firstPath);
+                    normalizedSecondPath = ClonePoints(secondPath.AsEnumerable().Reverse().ToList());
+                    break;
+                case 2:
+                    normalizedFirstPath = ClonePoints(firstPath.AsEnumerable().Reverse().ToList());
+                    normalizedSecondPath = ClonePoints(secondPath);
+                    break;
+                default:
+                    normalizedFirstPath = ClonePoints(firstPath.AsEnumerable().Reverse().ToList());
+                    normalizedSecondPath = ClonePoints(secondPath.AsEnumerable().Reverse().ToList());
+                    break;
             }
 
-            sampledPoints = RemoveDuplicatePointsByDistance(sampledPoints, DuplicateToleranceMillimeters);
-            if (sampledPoints.Count < 4) return sampledPoints;
+            if (!ShouldMergeInsignificantCorner(
+                    normalizedFirstPath,
+                    normalizedSecondPath,
+                    SmallGapJoinToleranceMillimeters,
+                    NearStraightAngleDegrees))
+                return false;
 
-            if (horizontalDominant)
-                return BuildHorizontalEnvelopeOutline(sampledPoints);
+            var sharedPoint = new TSG.Point(
+                (normalizedFirstPath[normalizedFirstPath.Count - 1].X + normalizedSecondPath[0].X) * 0.5,
+                (normalizedFirstPath[normalizedFirstPath.Count - 1].Y + normalizedSecondPath[0].Y) * 0.5,
+                0
+            );
 
-            return BuildVerticalEnvelopeOutline(sampledPoints);
-        }
+            normalizedFirstPath[normalizedFirstPath.Count - 1] = sharedPoint;
+            normalizedSecondPath[0] = new TSG.Point(sharedPoint.X, sharedPoint.Y, 0);
 
-        private static List<TSG.Point> BuildHorizontalEnvelopeOutline(List<TSG.Point> points) {
-            var groupedPoints = points
-                .Where(point => point != null)
-                .GroupBy(point => Math.Round(point.X / DuplicateToleranceMillimeters))
-                .OrderBy(group => group.Key)
-                .ToList();
+            var candidatePath = ClonePoints(normalizedFirstPath);
+            candidatePath.AddRange(normalizedSecondPath.Skip(1).Select(point => new TSG.Point(point.X, point.Y, 0)));
+            candidatePath = PrepareBoundaryPath(candidatePath);
 
-            if (groupedPoints.Count < 2) return new List<TSG.Point>();
+            if (candidatePath == null || candidatePath.Count < 2)
+                return false;
 
-            var upper = new List<TSG.Point>();
-            var lower = new List<TSG.Point>();
-
-            foreach (var group in groupedPoints) {
-                var orderedPoints = group.OrderBy(point => point.Y).ToList();
-                var x = orderedPoints.Average(point => point.X);
-                var minY = orderedPoints.First().Y;
-                var maxY = orderedPoints.Last().Y;
-
-                upper.Add(new TSG.Point(x, maxY, 0));
-                lower.Add(new TSG.Point(x, minY, 0));
-            }
-
-            var outline = new List<TSG.Point>();
-            outline.AddRange(upper);
-            outline.AddRange(lower.AsEnumerable().Reverse());
-            return outline;
-        }
-
-        private static List<TSG.Point> BuildVerticalEnvelopeOutline(List<TSG.Point> points) {
-            var groupedPoints = points
-                .Where(point => point != null)
-                .GroupBy(point => Math.Round(point.Y / DuplicateToleranceMillimeters))
-                .OrderBy(group => group.Key)
-                .ToList();
-
-            if (groupedPoints.Count < 2) return new List<TSG.Point>();
-
-            var left = new List<TSG.Point>();
-            var right = new List<TSG.Point>();
-
-            foreach (var group in groupedPoints) {
-                var orderedPoints = group.OrderBy(point => point.X).ToList();
-                var y = orderedPoints.Average(point => point.Y);
-                var minX = orderedPoints.First().X;
-                var maxX = orderedPoints.Last().X;
-
-                left.Add(new TSG.Point(minX, y, 0));
-                right.Add(new TSG.Point(maxX, y, 0));
-            }
-
-            var outline = new List<TSG.Point>();
-            outline.AddRange(right);
-            outline.AddRange(left.AsEnumerable().Reverse());
-            return outline;
+            mergedPath = candidatePath;
+            return true;
         }
 
         private static List<List<TSG.Point>> BuildBoundaryPathsFromSegments(List<ProjectedSegment2D> boundarySegments) {
@@ -825,55 +1360,75 @@ namespace HFT_DrawingHelper {
         }
 
         private static List<List<TSG.Point>> RemoveInteriorBoundaryPaths(List<List<TSG.Point>> boundaryPaths) {
-            if (boundaryPaths == null || boundaryPaths.Count <= 1) return boundaryPaths ?? new List<List<TSG.Point>>();
+            if (boundaryPaths == null || boundaryPaths.Count == 0)
+                return new List<List<TSG.Point>>();
 
-            var indexedPaths = boundaryPaths
-                .Select((path, index) => new {
-                    Index = index,
-                    Path = path,
-                    Area = Math.Abs(ComputeSignedArea(EnsureClosedOutlineCopy(path))),
-                    Length = ComputePolylineLength(path)
-                })
-                .OrderByDescending(item => item.Area)
-                .ThenByDescending(item => item.Length)
+            var preparedPaths = boundaryPaths
+                .Select(PrepareBoundaryPath)
+                .Where(path => path != null && path.Count >= 2)
                 .ToList();
 
+            if (preparedPaths.Count <= 1)
+                return preparedPaths;
+
+            var dominantBoundary = GetDominantBoundaryPolygon(preparedPaths);
+            if (dominantBoundary == null || dominantBoundary.Count < 4)
+                return preparedPaths;
+
             var keptPaths = new List<List<TSG.Point>>();
+            foreach (var path in preparedPaths)
+                if (!IsBoundaryPathInsidePolygon(path, dominantBoundary))
+                    keptPaths.Add(path);
 
-            foreach (var indexedPath in indexedPaths) {
-                if (IsBoundaryPathInsideAnyOtherBoundary(indexedPath.Path, keptPaths))
-                    continue;
-
-                keptPaths.Add(indexedPath.Path);
-            }
-
-            return keptPaths;
+            return keptPaths.Count > 0 ? keptPaths : preparedPaths;
         }
 
-        private static bool IsBoundaryPathInsideAnyOtherBoundary(
-            List<TSG.Point> candidatePath,
-            List<List<TSG.Point>> outerPaths
-        ) {
-            if (candidatePath == null || candidatePath.Count < 2 || outerPaths == null || outerPaths.Count == 0)
+        private static List<TSG.Point> SelectPrimaryOuterBoundaryPath(List<List<TSG.Point>> boundaryPaths) {
+            if (boundaryPaths == null || boundaryPaths.Count == 0)
+                return null;
+
+            var preparedPaths = boundaryPaths
+                .Select(PrepareBoundaryPath)
+                .Where(path => path != null && path.Count >= 2)
+                .ToList();
+
+            if (preparedPaths.Count == 0)
+                return null;
+
+            var dominantBoundary = GetDominantBoundaryPolygon(preparedPaths);
+            if (dominantBoundary != null && dominantBoundary.Count >= 4)
+                return GetOpenOutlineVertices(dominantBoundary);
+
+            return preparedPaths
+                .OrderByDescending(ComputePolylineLength)
+                .FirstOrDefault();
+        }
+
+        private static List<TSG.Point> GetDominantBoundaryPolygon(List<List<TSG.Point>> boundaryPaths) {
+            if (boundaryPaths == null || boundaryPaths.Count == 0)
+                return null;
+
+            return boundaryPaths
+                .Select(EnsureClosedOutlineCopy)
+                .Where(path => path != null && path.Count >= 4)
+                .OrderByDescending(path => Math.Abs(ComputeSignedArea(path)))
+                .ThenByDescending(ComputePolylineLength)
+                .FirstOrDefault();
+        }
+
+        private static bool IsBoundaryPathInsidePolygon(List<TSG.Point> candidatePath, List<TSG.Point> polygon) {
+            if (candidatePath == null || candidatePath.Count < 2 || polygon == null || polygon.Count < 4)
                 return false;
 
             var samplePoints = GetBoundaryPathSamplePoints(candidatePath);
-            if (samplePoints.Count == 0) return false;
+            if (samplePoints.Count == 0)
+                return false;
 
-            foreach (var outerPath in outerPaths) {
-                var closedOuterPath = EnsureClosedOutlineCopy(outerPath);
-                if (closedOuterPath.Count < 4) continue;
+            foreach (var samplePoint in samplePoints)
+                if (!IsPointStrictlyInsidePolygon(samplePoint, polygon))
+                    return false;
 
-                var insideSamples = 0;
-                foreach (var samplePoint in samplePoints)
-                    if (IsPointStrictlyInsidePolygon(samplePoint, closedOuterPath))
-                        insideSamples++;
-
-                if (insideSamples == samplePoints.Count)
-                    return true;
-            }
-
-            return false;
+            return true;
         }
 
         private static List<TSG.Point> GetBoundaryPathSamplePoints(List<TSG.Point> path) {
@@ -935,10 +1490,7 @@ namespace HFT_DrawingHelper {
             if (boundarySegments == null || usedSegments == null || currentPath == null || currentPath.Count < 2)
                 return;
 
-            var extended = true;
-            while (extended) {
-                extended = false;
-
+            while (true) {
                 var bestSegmentIndex = FindBestConnectedBoundarySegmentIndex(
                     boundarySegments,
                     usedSegments,
@@ -957,7 +1509,6 @@ namespace HFT_DrawingHelper {
                     currentPath.Insert(0, new TSG.Point(nextPoint.X, nextPoint.Y, 0));
 
                 usedSegments[bestSegmentIndex] = true;
-                extended = true;
             }
         }
 
@@ -2024,16 +2575,6 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
-        private static List<TSG.Point> PrepareSegmentPath(List<TSG.Point> points) {
-            if (points == null) return null;
-
-            var result = RemoveNearDuplicates(new List<TSG.Point>(points), DuplicateToleranceMillimeters);
-            result = SimplifyPolyline(result);
-            result = RemoveNearDuplicates(result, DuplicateToleranceMillimeters);
-
-            return result;
-        }
-
         private static List<TSG.Point> BuildUpperLowerChainOutline(List<TSG.Point> points) {
             if (points == null || points.Count < 2) return null;
 
@@ -2052,59 +2593,6 @@ namespace HFT_DrawingHelper {
             outline.AddRange(Enumerable.Reverse(lower));
 
             return outline;
-        }
-
-        private static List<TSG.Point> SimplifyPolyline(
-            List<TSG.Point> points,
-            double toleranceMillimeters = 0.5
-        ) {
-            if (points == null || points.Count < 3) return points;
-
-            var current = new List<TSG.Point>(points);
-            var changed = true;
-
-            while (changed && current.Count >= 3) {
-                changed = false;
-                var next = new List<TSG.Point>();
-
-                var index = 0;
-                while (index < current.Count) {
-                    var remaining = current.Count - index;
-
-                    if (remaining >= 3) {
-                        var first = current[index];
-                        var middle = current[index + 1];
-                        var last = current[index + 2];
-
-                        var distance = GetDistanceToSegment(middle, first, last);
-
-                        if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], first))
-                            next.Add(first);
-
-                        if (distance <= toleranceMillimeters) {
-                            next.Add(last);
-                            changed = true;
-                        }
-                        else {
-                            next.Add(middle);
-                            next.Add(last);
-                        }
-
-                        index += 3;
-                    }
-                    else {
-                        for (var innerIndex = index; innerIndex < current.Count; innerIndex++)
-                            if (next.Count == 0 || !ArePointsEqual(next[next.Count - 1], current[innerIndex]))
-                                next.Add(current[innerIndex]);
-
-                        break;
-                    }
-                }
-
-                current = RemoveNearDuplicates(next, DuplicateToleranceMillimeters);
-            }
-
-            return current;
         }
 
         private static bool ShouldUseSweepOutline(TSM.Part modelPart) {

@@ -334,6 +334,7 @@ namespace HFT_DrawingHelper {
                             AddNormalizedAttributeName(names, fileName);
                     }
                     catch {
+                        // ignored
                     }
                 }
 
@@ -710,7 +711,7 @@ namespace HFT_DrawingHelper {
 
         private static List<SelectableEdgeGroup> BuildSelectableEdgeGroups(TSD.DrawingHandler drawingHandler) {
             var selectedDrawingParts = GetSelectedDrawingParts(drawingHandler);
-            TSD.View targetView = null;
+            TSD.View targetView;
 
             if (selectedDrawingParts.Count > 0) {
                 targetView = GetCommonViewFromSelectedParts(selectedDrawingParts);

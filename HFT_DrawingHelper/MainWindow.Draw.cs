@@ -9,15 +9,15 @@ namespace HFT_DrawingHelper {
     public partial class MainWindow {
         #region Main Edge Drawing Flow
 
-        private static string DrawEdgesWithNumbers() {
+        private static void DrawEdgesWithNumbers() {
             var drawingHandler = new TSD.DrawingHandler();
-            if (!drawingHandler.GetConnectionStatus()) return null;
+            if (!drawingHandler.GetConnectionStatus()) return;
 
             var drawing = drawingHandler.GetActiveDrawing();
-            if (drawing == null) return null;
+            if (drawing == null) return;
 
             var pickedView = GetSelectedViewOrShowMessage(drawingHandler);
-            if (pickedView == null) return null;
+            if (pickedView == null) return;
 
             var drawingParts = GetSelectedDrawingParts(drawingHandler);
             TSD.View commonView;
@@ -27,7 +27,7 @@ namespace HFT_DrawingHelper {
                 if (singleDrawingPart == null) {
                     MessageBox.Show(
                         "Jeśli nie zaznaczasz elementu, wskazany widok musi zawierać dokładnie jeden element typu Part.");
-                    return null;
+                    return;
                 }
 
                 drawingParts = new List<DrawingPartWithBounds> {
@@ -37,34 +37,34 @@ namespace HFT_DrawingHelper {
                 commonView = singleDrawingPart.DrawingPart.GetView() as TSD.View;
                 if (commonView == null) {
                     MessageBox.Show("Nie udało się ustalić widoku elementu.");
-                    return null;
+                    return;
                 }
             }
             else {
                 commonView = GetCommonViewFromSelectedParts(drawingParts);
                 if (commonView == null) {
                     MessageBox.Show("Zaznaczone elementy muszą należeć do jednego widoku.");
-                    return null;
+                    return;
                 }
             }
 
             var outlineSnapshots = GetPartOutlineSnapshots(commonView, drawingParts);
             if (outlineSnapshots == null || outlineSnapshots.Count == 0) {
                 MessageBox.Show("Nie udało się wyznaczyć krawędzi dla zaznaczonych elementów.");
-                return null;
+                return;
             }
 
             DrawOutlineSnapshots(commonView, outlineSnapshots);
 
             if (!HasExactlyOnePart(commonView)) {
                 drawing.CommitChanges();
-                return string.Empty;
+                return;
             }
 
             var edgesByNumber = BuildEdgesByNumberFromOutlines(outlineSnapshots);
             if (edgesByNumber.Count == 0) {
                 drawing.CommitChanges();
-                return string.Empty;
+                return;
             }
 
             var numberedGroups = BuildNumberedEdgeGroups(
@@ -82,7 +82,7 @@ namespace HFT_DrawingHelper {
 
             drawing.CommitChanges();
 
-            return FormatEdgeNumbersForTextBox(
+            FormatEdgeNumbersForTextBox(
                 numberedGroups.Keys.OrderBy(number => number).ToList()
             );
         }
@@ -138,18 +138,15 @@ namespace HFT_DrawingHelper {
             }
         }
 
-        private static string FormatEdgeNumbersForTextBox(List<int> numbers) {
-            if (numbers == null || numbers.Count == 0) return string.Empty;
+        private static void FormatEdgeNumbersForTextBox(List<int> numbers) {
+            if (numbers == null || numbers.Count == 0) return;
 
             var orderedNumbers = numbers
                 .Distinct()
                 .OrderBy(number => number)
                 .ToList();
 
-            if (orderedNumbers.Count <= MaximumInlineEdgeCount)
-                return string.Join(",", orderedNumbers);
-
-            return orderedNumbers.First() + "-" + orderedNumbers.Last();
+            if (orderedNumbers.Count <= MaximumInlineEdgeCount) string.Join(",", orderedNumbers);
         }
 
         private static TSG.Point ComputeTextInsertionPointForSegment(
@@ -254,35 +251,13 @@ namespace HFT_DrawingHelper {
 
             if (cleanedPoints == null || cleanedPoints.Count < 2) return;
 
-            switch (cleanedPoints.Count) {
-                case 2:
-                    DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
-                    return;
-                case 3: {
-                    var first = cleanedPoints[0];
-                    var last = cleanedPoints[cleanedPoints.Count - 1];
-
-                    var distance = Math.Sqrt(
-                        (first.X - last.X) * (first.X - last.X) +
-                        (first.Y - last.Y) * (first.Y - last.Y)
-                    );
-
-                    if (distance <= DuplicateToleranceMillimeters) {
-                        DrawStraightSegmentPrimitive(view, cleanedPoints[0], cleanedPoints[1], color);
-                        return;
-                    }
-
-                    break;
-                }
-            }
-
-            var polylinePoints = new TSD.PointList();
-            foreach (var point in cleanedPoints)
-                polylinePoints.Add(new TSG.Point(point.X, point.Y, 0));
-
-            var polyline = new TSD.Polyline(view, polylinePoints);
-            polyline.Attributes.Line.Color = color;
-            polyline.Insert();
+            for (var index = 0; index < cleanedPoints.Count - 1; index++)
+                DrawStraightSegmentPrimitive(
+                    view,
+                    cleanedPoints[index],
+                    cleanedPoints[index + 1],
+                    color
+                );
         }
 
         #endregion

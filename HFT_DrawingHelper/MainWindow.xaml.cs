@@ -9,7 +9,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Threading;
 using Tekla.Structures.Dialog.UIControls;
 using TS = Tekla.Structures;
 using TSM = Tekla.Structures.Model;
@@ -33,7 +32,7 @@ namespace HFT_DrawingHelper {
             new Dictionary<int, List<TSD.DrawingObject>>();
 
         private bool _sectionAttributeOptionsLoaded;
-        private bool _sectionAttributeOptionsLoading;
+
         private SidePanelMode _sidePanelMode = SidePanelMode.None;
 
         public MainWindow() {
@@ -42,6 +41,7 @@ namespace HFT_DrawingHelper {
                 EdgeGroupsList.ItemsSource = _edgeGroups;
                 ViewAttributeNameComboBox.ItemsSource = _availableViewAttributeNames;
                 MarkAttributeNameComboBox.ItemsSource = _availableMarkAttributeNames;
+                LoadSectionSettingsFallbackOnly();
                 LoadSectionSettingsIntoPanel();
                 ModelDrawingLabel.Text = MyModel.GetInfo().ModelName.Replace(".db1", "");
                 return;
@@ -169,17 +169,19 @@ namespace HFT_DrawingHelper {
         }
 
         private void RefreshSectionSettingsButton_Click(object sender, RoutedEventArgs e) {
-            BeginLoadSectionAttributeOptions(true);
+            ReloadSectionAttributeOptions();
         }
 
         private void ToggleSettingsPanel() {
             var isVisible = SettingsPanelBorder.Visibility != Visibility.Visible;
             SetSettingsPanelVisibility(isVisible);
 
-            if (isVisible) {
+            if (!isVisible) return;
+
+            if (!_sectionAttributeOptionsLoaded)
+                ReloadSectionAttributeOptions();
+            else
                 LoadSectionSettingsIntoPanel();
-                BeginLoadSectionAttributeOptions(false);
-            }
         }
 
         private void SetSettingsPanelVisibility(bool isVisible) {
@@ -187,33 +189,17 @@ namespace HFT_DrawingHelper {
             SettingsPanelBorder.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        private void BeginLoadSectionAttributeOptions(bool forceReload) {
-            if (ViewAttributeNameComboBox == null || MarkAttributeNameComboBox == null) return;
-            if (_sectionAttributeOptionsLoading) return;
-
-            if (!forceReload && _sectionAttributeOptionsLoaded) {
-                LoadSectionSettingsIntoPanel();
-                return;
+        private void ReloadSectionAttributeOptions() {
+            try {
+                ApplyAttributeCollectionSnapshot(_availableViewAttributeNames, GetAvailableViewAttributeNames());
+                ApplyAttributeCollectionSnapshot(_availableMarkAttributeNames, GetAvailableMarkAttributeNames());
+                _sectionAttributeOptionsLoaded = true;
+            }
+            catch {
+                LoadSectionSettingsFallbackOnly();
             }
 
-            _sectionAttributeOptionsLoading = true;
-
-            if (RefreshSectionSettingsButton != null)
-                RefreshSectionSettingsButton.IsEnabled = false;
-
-            Dispatcher.BeginInvoke(new Action(() => {
-                try {
-                    TryReloadSectionAttributeOptions();
-                    _sectionAttributeOptionsLoaded = true;
-                    LoadSectionSettingsIntoPanel();
-                }
-                finally {
-                    _sectionAttributeOptionsLoading = false;
-
-                    if (RefreshSectionSettingsButton != null)
-                        RefreshSectionSettingsButton.IsEnabled = true;
-                }
-            }), DispatcherPriority.Background);
+            LoadSectionSettingsIntoPanel();
         }
 
         private void LoadSectionSettingsIntoPanel() {
@@ -229,71 +215,35 @@ namespace HFT_DrawingHelper {
                 .FirstOrDefault(item => string.Equals(item, _markAttributeName, StringComparison.OrdinalIgnoreCase));
         }
 
-        private void ReloadSectionAttributeOptions() {
-            PopulateAttributeCollection(
+        private void LoadSectionSettingsFallbackOnly() {
+            ApplyAttributeCollectionSnapshot(
                 _availableViewAttributeNames,
-                GetAvailableAttributeNames(
-                    new[] { "vi", "vw", "view" },
-                    _viewAttributeName,
-                    DefaultViewAttributeName
-                ),
-                _viewAttributeName,
-                DefaultViewAttributeName
+                OrderAttributeNames(new[] { _viewAttributeName, DefaultViewAttributeName })
             );
 
-            PopulateAttributeCollection(
+            ApplyAttributeCollectionSnapshot(
                 _availableMarkAttributeNames,
-                GetAvailableAttributeNames(
-                    new[] { "csm", "mrk", "mark" },
-                    _markAttributeName,
-                    DefaultMarkAttributeName
-                ),
-                _markAttributeName,
-                DefaultMarkAttributeName
+                OrderAttributeNames(new[] { _markAttributeName, DefaultMarkAttributeName })
+            );
+
+            LoadSectionSettingsIntoPanel();
+        }
+
+        private SectionAttributeOptionsSnapshot BuildSectionAttributeOptionsSnapshot() {
+            return new SectionAttributeOptionsSnapshot(
+                GetAvailableViewAttributeNames(),
+                GetAvailableMarkAttributeNames()
             );
         }
 
-        private void TryReloadSectionAttributeOptions() {
-            try {
-                ReloadSectionAttributeOptions();
-            }
-            catch {
-                PopulateAttributeCollection(
-                    _availableViewAttributeNames,
-                    Array.Empty<string>(),
-                    _viewAttributeName,
-                    DefaultViewAttributeName
-                );
-
-                PopulateAttributeCollection(
-                    _availableMarkAttributeNames,
-                    Array.Empty<string>(),
-                    _markAttributeName,
-                    DefaultMarkAttributeName
-                );
-            }
-        }
-
-        private static void PopulateAttributeCollection(
+        private static void ApplyAttributeCollectionSnapshot(
             ObservableCollection<string> targetCollection,
-            IEnumerable<string> discoveredNames,
-            params string[] requiredNames
+            IEnumerable<string> discoveredNames
         ) {
             if (targetCollection == null) return;
 
-            var finalNames = OrderAttributeNames(discoveredNames ?? Enumerable.Empty<string>());
-
-            foreach (var requiredName in requiredNames) {
-                if (string.IsNullOrWhiteSpace(requiredName)) continue;
-                if (finalNames.Any(item => string.Equals(item, requiredName, StringComparison.OrdinalIgnoreCase)))
-                    continue;
-                finalNames.Add(requiredName.Trim());
-            }
-
-            finalNames = OrderAttributeNames(finalNames);
-
             targetCollection.Clear();
-            foreach (var item in finalNames)
+            foreach (var item in OrderAttributeNames(discoveredNames ?? Enumerable.Empty<string>()))
                 targetCollection.Add(item);
         }
 
@@ -316,41 +266,302 @@ namespace HFT_DrawingHelper {
                 targetCollection.Add(item);
         }
 
-        private static List<string> GetAvailableAttributeNames(
+        private static List<string> GetAvailableViewAttributeNames() {
+            var candidateNames = GetAvailableAttributeNamesFromExtensions(
+                new[] { "vi", "vw", "view" },
+                _viewAttributeName,
+                DefaultViewAttributeName
+            );
+
+            foreach (var attributeName in GetShallowAttributeNamesFromStandardDirectories())
+                AddNormalizedAttributeName(candidateNames, attributeName);
+
+            return OrderAttributeNames(candidateNames);
+        }
+
+        private static List<string> GetAvailableMarkAttributeNames() {
+            var candidateNames = GetAvailableAttributeNamesFromExtensions(
+                new[] { "csm", "mrk", "mark", "pm" },
+                _markAttributeName,
+                DefaultMarkAttributeName
+            );
+
+            foreach (var attributeName in GetShallowAttributeNamesFromStandardDirectories())
+                AddNormalizedAttributeName(candidateNames, attributeName);
+
+            return OrderAttributeNames(candidateNames);
+        }
+
+        private static HashSet<string> GetAvailableAttributeNamesFromExtensions(
             IEnumerable<string> candidateExtensions,
             params string[] fallbackNames
         ) {
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var candidateNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             if (candidateExtensions != null)
                 foreach (var extension in candidateExtensions) {
                     if (string.IsNullOrWhiteSpace(extension)) continue;
 
                     try {
-                        var fileNames = EnvironmentFiles.GetMultiDirectoryFileList(extension.Trim());
-                        if (fileNames == null) continue;
-
-                        foreach (var fileName in fileNames)
-                            AddNormalizedAttributeName(names, fileName);
+                        var fileNames = EnvironmentFiles.GetMultiDirectoryFileList(extension);
+                        if (fileNames != null)
+                            foreach (var fileName in fileNames)
+                                AddNormalizedAttributeName(candidateNames, fileName);
                     }
                     catch {
-                        // ignored
+                    }
+
+                    try {
+                        var fileNames = EnvironmentFiles.GetAttributeFiles(extension);
+                        if (fileNames != null)
+                            foreach (var fileName in fileNames)
+                                AddNormalizedAttributeName(candidateNames, fileName);
+                    }
+                    catch {
                     }
                 }
 
             foreach (var fallbackName in fallbackNames)
-                AddNormalizedAttributeName(names, fallbackName);
+                AddNormalizedAttributeName(candidateNames, fallbackName);
 
-            return OrderAttributeNames(names);
+            return candidateNames;
+        }
+
+        private static IEnumerable<string> GetShallowAttributeNamesFromStandardDirectories() {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            List<string> directories;
+            try {
+                directories = EnvironmentFiles.GetStandardPropertyFileDirectories();
+            }
+            catch {
+                return result;
+            }
+
+            if (directories == null || directories.Count == 0)
+                return result;
+
+            foreach (var directory in directories.Where(directory => !string.IsNullOrWhiteSpace(directory)))
+            foreach (var candidateDirectory in GetShallowSearchDirectories(directory))
+            foreach (var attributeName in EnumerateTopLevelAttributeNames(candidateDirectory))
+                result.Add(attributeName);
+
+            return result;
+        }
+
+        private static IEnumerable<string> GetShallowSearchDirectories(string directory) {
+            var result = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(directory))
+                return result;
+
+            if (EnvironmentFiles.IsValidDirectory(directory))
+                result.Add(directory);
+
+            var attributesDirectory = Path.Combine(directory, "attributes");
+            if (EnvironmentFiles.IsValidDirectory(attributesDirectory))
+                result.Add(attributesDirectory);
+
+            try {
+                if (EnvironmentFiles.IsValidDirectory(directory))
+                    foreach (var subDirectory in Directory.EnumerateDirectories(directory)
+                                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)) {
+                        result.Add(subDirectory);
+
+                        var subAttributesDirectory = Path.Combine(subDirectory, "attributes");
+                        if (EnvironmentFiles.IsValidDirectory(subAttributesDirectory))
+                            result.Add(subAttributesDirectory);
+                    }
+            }
+            catch {
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<string> EnumerateTopLevelAttributeNames(string directory) {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (string.IsNullOrWhiteSpace(directory) || !EnvironmentFiles.IsValidDirectory(directory))
+                return result;
+
+            try {
+                foreach (var filePath in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)) {
+                    var fileName = Path.GetFileName(filePath);
+                    if (string.IsNullOrWhiteSpace(fileName))
+                        continue;
+
+                    if (!LooksLikeSectionAttributeFile(fileName))
+                        continue;
+
+                    var normalizedName = NormalizeAttributeName(fileName);
+                    if (!string.IsNullOrWhiteSpace(normalizedName))
+                        result.Add(normalizedName);
+                }
+            }
+            catch {
+            }
+
+            return result;
+        }
+
+        private static bool LooksLikeSectionAttributeFile(string fileName) {
+            if (string.IsNullOrWhiteSpace(fileName))
+                return false;
+
+            var normalizedName = NormalizeAttributeName(fileName);
+            if (string.IsNullOrWhiteSpace(normalizedName))
+                return false;
+
+            if (normalizedName.StartsWith("#", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (normalizedName.IndexOf("section", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            if (normalizedName.IndexOf("schnitt", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            if (normalizedName.IndexOf("mark", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            return string.Equals(normalizedName, "standard", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void AddCandidateIfLoadable(
+            ICollection<string> targetCollection,
+            string filePath,
+            Func<string, bool> canLoadAttributes
+        ) {
+            var normalizedValue = NormalizeAttributeName(Path.GetFileName(filePath));
+            if (string.IsNullOrWhiteSpace(normalizedValue)) return;
+            if (!canLoadAttributes(normalizedValue)) return;
+
+            targetCollection.Add(normalizedValue);
+        }
+
+        private static IEnumerable<string> EnumerateLikelyPropertyFiles() {
+            List<string> directories;
+
+            try {
+                directories = EnvironmentFiles.GetStandardPropertyFileDirectories();
+            }
+            catch {
+                return Enumerable.Empty<string>();
+            }
+
+            if (directories == null || directories.Count == 0)
+                return Enumerable.Empty<string>();
+
+            var uniqueFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var result = new List<string>();
+
+            foreach (var directory in directories.Where(directory => !string.IsNullOrWhiteSpace(directory))) {
+                foreach (var filePath in EnumerateFilesFromDirectoryAndAttributes(directory))
+                    if (uniqueFiles.Add(filePath))
+                        result.Add(filePath);
+
+                foreach (var subDirectory in EnumerateImmediateDirectories(directory)
+                             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                foreach (var filePath in EnumerateFilesFromDirectoryAndAttributes(subDirectory))
+                    if (uniqueFiles.Add(filePath))
+                        result.Add(filePath);
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<string> EnumerateFilesFromDirectoryAndAttributes(string directory) {
+            var result = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(directory))
+                return result;
+
+            foreach (var currentDirectory in GetDirectoryCandidates(directory))
+            foreach (var filePath in EnumerateTopLevelFiles(currentDirectory))
+                result.Add(filePath);
+
+            return result;
+        }
+
+        private static IEnumerable<string> GetDirectoryCandidates(string directory) {
+            var result = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(directory))
+                return result;
+
+            if (EnvironmentFiles.IsValidDirectory(directory))
+                result.Add(directory);
+
+            var attributesDirectory = Path.Combine(directory, "attributes");
+            if (EnvironmentFiles.IsValidDirectory(attributesDirectory))
+                result.Add(attributesDirectory);
+
+            return result;
+        }
+
+        private static IEnumerable<string> EnumerateImmediateDirectories(string directory) {
+            if (string.IsNullOrWhiteSpace(directory) || !EnvironmentFiles.IsValidDirectory(directory))
+                return Enumerable.Empty<string>();
+
+            try {
+                return Directory.EnumerateDirectories(directory).ToList();
+            }
+            catch {
+                return Enumerable.Empty<string>();
+            }
+        }
+
+        private static IEnumerable<string> EnumerateTopLevelFiles(string directory) {
+            if (string.IsNullOrWhiteSpace(directory) || !EnvironmentFiles.IsValidDirectory(directory))
+                return Enumerable.Empty<string>();
+
+            try {
+                return Directory.EnumerateFiles(directory, "*.*", SearchOption.TopDirectoryOnly).ToList();
+            }
+            catch {
+                return Enumerable.Empty<string>();
+            }
+        }
+
+        private static bool CanLoadViewAttributes(string attributeName) {
+            if (string.IsNullOrWhiteSpace(attributeName)) return false;
+
+            try {
+                var attributes = new TSD.View.ViewAttributes();
+                return attributes.LoadAttributes(attributeName.Trim());
+            }
+            catch {
+                return false;
+            }
+        }
+
+        private static bool CanLoadMarkAttributes(string attributeName) {
+            if (string.IsNullOrWhiteSpace(attributeName)) return false;
+
+            try {
+                var attributes = new TSD.SectionMarkBase.SectionMarkAttributes();
+                return attributes.LoadAttributes(attributeName.Trim());
+            }
+            catch {
+                return false;
+            }
         }
 
         private static void AddNormalizedAttributeName(ICollection<string> targetCollection, string value) {
-            if (targetCollection == null || string.IsNullOrWhiteSpace(value)) return;
+            if (targetCollection == null) return;
 
-            var normalizedValue = Path.GetFileNameWithoutExtension(value.Trim());
+            var normalizedValue = NormalizeAttributeName(value);
             if (string.IsNullOrWhiteSpace(normalizedValue)) return;
 
             targetCollection.Add(normalizedValue);
+        }
+
+        private static string NormalizeAttributeName(string value) {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+
+            var normalizedValue = Path.GetFileNameWithoutExtension(value.Trim());
+            return string.IsNullOrWhiteSpace(normalizedValue) ? null : normalizedValue;
         }
 
         private static List<string> OrderAttributeNames(IEnumerable<string> names) {
@@ -361,6 +572,20 @@ namespace HFT_DrawingHelper {
                 .OrderBy(name => string.Equals(name, "standard", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private sealed class SectionAttributeOptionsSnapshot {
+            public SectionAttributeOptionsSnapshot(
+                IEnumerable<string> viewAttributeNames,
+                IEnumerable<string> markAttributeNames
+            ) {
+                ViewAttributeNames = OrderAttributeNames(viewAttributeNames ?? Enumerable.Empty<string>());
+                MarkAttributeNames = OrderAttributeNames(markAttributeNames ?? Enumerable.Empty<string>());
+            }
+
+            public IReadOnlyList<string> ViewAttributeNames { get; }
+
+            public IReadOnlyList<string> MarkAttributeNames { get; }
         }
 
         private enum SidePanelMode {
@@ -711,7 +936,7 @@ namespace HFT_DrawingHelper {
 
         private static List<SelectableEdgeGroup> BuildSelectableEdgeGroups(TSD.DrawingHandler drawingHandler) {
             var selectedDrawingParts = GetSelectedDrawingParts(drawingHandler);
-            TSD.View targetView;
+            TSD.View targetView = null;
 
             if (selectedDrawingParts.Count > 0) {
                 targetView = GetCommonViewFromSelectedParts(selectedDrawingParts);

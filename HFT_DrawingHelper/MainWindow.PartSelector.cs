@@ -79,7 +79,7 @@ namespace HFT_DrawingHelper {
                     )
                 ));
 
-            PartItemsList.ItemsSource = _partGroups;
+            _partItemsList.ItemsSource = _partGroups;
             SetSidePanelMode(SidePanelMode.Parts);
         }
 

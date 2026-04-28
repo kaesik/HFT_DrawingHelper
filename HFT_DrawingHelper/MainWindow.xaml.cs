@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -7,8 +7,10 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Tekla.Structures.Dialog.UIControls;
 using TS = Tekla.Structures;
 using TSM = Tekla.Structures.Model;
@@ -18,6 +20,9 @@ using TSG = Tekla.Structures.Geometry3d;
 namespace HFT_DrawingHelper {
     public partial class MainWindow {
         private static readonly TSM.Model MyModel = new TSM.Model();
+
+        private readonly ObservableCollection<string> _availableDimensionAttributeNames =
+            new ObservableCollection<string>();
 
         private readonly ObservableCollection<string> _availableMarkAttributeNames =
             new ObservableCollection<string>();
@@ -31,25 +36,317 @@ namespace HFT_DrawingHelper {
         private readonly Dictionary<int, List<TSD.DrawingObject>> _edgePreviewObjectsByGroupNumber =
             new Dictionary<int, List<TSD.DrawingObject>>();
 
+        private RadioButton _angledDimensionRadioButton;
+        private RadioButton _curvedDimensionRadioButton;
+        private CheckBox _dimensionAboveCheckBox;
+        private ComboBox _dimensionAttributeNameComboBox;
+        private CheckBox _dimensionBelowCheckBox;
+        private CheckBox _dimensionLeftCheckBox;
+        private CheckBox _dimensionRightCheckBox;
+        private ListBox _edgeGroupsList;
+        private FrameworkElement _edgeSelectionPanel;
+        private CheckBox _horizontalTotalDimensionCheckBox;
+
+        private bool _isResettingMainTabsStartupState;
+        private bool _mainTabSelectionWasRequestedByUser;
+        private ComboBox _markAttributeNameComboBox;
+        private ListBox _partItemsList;
+        private FrameworkElement _partSelectionPanel;
+
         private bool _sectionAttributeOptionsLoaded;
+        private CheckBox _shortExtensionLineCheckBox;
 
         private SidePanelMode _sidePanelMode = SidePanelMode.None;
+        private CheckBox _verticalTotalDimensionCheckBox;
+
+        private ComboBox _viewAttributeNameComboBox;
 
         public MainWindow() {
             if (MyModel.GetConnectionStatus()) {
                 InitializeComponent();
-                EdgeGroupsList.ItemsSource = _edgeGroups;
-                ViewAttributeNameComboBox.ItemsSource = _availableViewAttributeNames;
-                MarkAttributeNameComboBox.ItemsSource = _availableMarkAttributeNames;
+                InitializeSplitXamlReferences();
+                WireSplitXamlEvents();
+                _edgeGroupsList.ItemsSource = _edgeGroups;
+                _viewAttributeNameComboBox.ItemsSource = _availableViewAttributeNames;
+                _markAttributeNameComboBox.ItemsSource = _availableMarkAttributeNames;
+                _dimensionAttributeNameComboBox.ItemsSource = _availableDimensionAttributeNames;
+                LoadSavedSectionSettings();
                 LoadSectionSettingsFallbackOnly();
                 LoadSectionSettingsIntoPanel();
-                ModelDrawingLabel.Text = MyModel.GetInfo().ModelName.Replace(".db1", "");
+                var modelName = MyModel.GetInfo().ModelName.Replace(".db1", "");
+                ModelDrawingLabel.Text = modelName;
+                InitializeStartScreen(modelName);
                 return;
             }
 
             var connectionErrorWindow = new TeklaConnectionErrorWindow();
             connectionErrorWindow.ShowDialog();
             Close();
+        }
+
+
+        private void InitializeSplitXamlReferences() {
+            UpdateLayout();
+
+            _viewAttributeNameComboBox = FindNamedDescendant<ComboBox>("ViewAttributeNameComboBox");
+            _markAttributeNameComboBox = FindNamedDescendant<ComboBox>("MarkAttributeNameComboBox");
+            _dimensionAttributeNameComboBox = FindNamedDescendant<ComboBox>("DimensionAttributeNameComboBox");
+            _partItemsList = FindNamedDescendant<ListBox>("PartItemsList");
+            _edgeGroupsList = FindNamedDescendant<ListBox>("EdgeGroupsList");
+            _partSelectionPanel = FindNamedDescendant<FrameworkElement>("PartSelectionPanel");
+            _edgeSelectionPanel = FindNamedDescendant<FrameworkElement>("EdgeSelectionPanel");
+            FindNamedDescendant<Button>("DrawEdgesButton");
+            FindNamedDescendant<Button>("GetEdgesButton");
+            FindNamedDescendant<Button>("AddSectionsButton");
+            FindNamedDescendant<Button>("ShowSelectedPartsButton");
+            FindNamedDescendant<Button>("AddDimensionsButton");
+            FindNamedDescendant<Button>("RefreshSectionSettingsButton");
+            FindNamedDescendant<Button>("ApplySectionSettingsButton");
+            _angledDimensionRadioButton = FindNamedDescendant<RadioButton>("AngledDimensionRadioButton");
+            _curvedDimensionRadioButton = FindNamedDescendant<RadioButton>("CurvedDimensionRadioButton");
+            _dimensionAboveCheckBox = FindNamedDescendant<CheckBox>("DimensionAboveCheckBox");
+            _dimensionBelowCheckBox = FindNamedDescendant<CheckBox>("DimensionBelowCheckBox");
+            _horizontalTotalDimensionCheckBox = FindNamedDescendant<CheckBox>("HorizontalTotalDimensionCheckBox");
+            _dimensionRightCheckBox = FindNamedDescendant<CheckBox>("DimensionRightCheckBox");
+            _dimensionLeftCheckBox = FindNamedDescendant<CheckBox>("DimensionLeftCheckBox");
+            _verticalTotalDimensionCheckBox = FindNamedDescendant<CheckBox>("VerticalTotalDimensionCheckBox");
+            _shortExtensionLineCheckBox = FindNamedDescendant<CheckBox>("ShortExtensionLineCheckBox");
+        }
+
+        private void WireSplitXamlEvents() {
+            AddClickHandler("CloseSettingsPanelButton", CloseSettingsPanelButton_Click);
+            AddClickHandler("RefreshSectionSettingsButton", RefreshSectionSettingsButton_Click);
+            AddClickHandler("ApplySectionSettingsButton", ApplySectionSettingsButton_Click);
+            AddClickHandler("DrawEdgesButton", DrawEdgesButton_Click);
+            AddClickHandler("GetEdgesButton", GetEdgesButton_Click);
+            AddClickHandler("AddSectionsButton", AddSectionsButton_Click);
+            AddClickHandler("ShowSelectedPartsButton", ShowSelectedPartsButton_Click);
+            AddClickHandler("AddDimensionsButton", AddDimensionsButton_Click);
+            AddClickHandler("ClosePartsSidePanelButton", CloseSidePanelButton_Click);
+            AddClickHandler("CloseEdgesSidePanelButton", CloseSidePanelButton_Click);
+            AddClickHandler("SelectAllPartsButton", SelectAllPartsButton_Click);
+            AddClickHandler("DeselectAllPartsButton", DeselectAllPartsButton_Click);
+            AddClickHandler("SelectAllEdgesButton", SelectAllEdgesButton_Click);
+            AddClickHandler("DeselectAllEdgesButton", DeselectAllEdgesButton_Click);
+
+            if (_partItemsList != null) {
+                _partItemsList.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(PartItemsList_Click), true);
+                _partItemsList.AddHandler(MouseLeftButtonDownEvent,
+                    new MouseButtonEventHandler(PartItemsList_MouseLeftButtonDown), true);
+            }
+
+            if (_edgeGroupsList != null)
+                _edgeGroupsList.AddHandler(MouseLeftButtonDownEvent,
+                    new MouseButtonEventHandler(EdgeGroupsList_MouseLeftButtonDown), true);
+        }
+
+        private void AddClickHandler(string elementName, RoutedEventHandler handler) {
+            var button = FindNamedDescendant<ButtonBase>(elementName);
+            if (button != null)
+                button.Click += handler;
+        }
+
+        private void InitializeStartScreen(string modelName) {
+            _isResettingMainTabsStartupState = true;
+            _mainTabSelectionWasRequestedByUser = false;
+
+            MainTabs.PreviewMouseLeftButtonDown += MainTabs_PreviewMouseLeftButtonDown;
+            MainTabs.PreviewKeyDown += MainTabs_PreviewKeyDown;
+
+            SetStartScreenModelName(modelName);
+            ResetMainTabsToStartScreen();
+
+            Dispatcher.BeginInvoke(new Action(() => {
+                ResetMainTabsToStartScreen();
+
+                Dispatcher.BeginInvoke(new Action(() => {
+                    ResetMainTabsToStartScreen();
+                    _isResettingMainTabsStartupState = false;
+                }), DispatcherPriority.ApplicationIdle);
+            }), DispatcherPriority.Loaded);
+        }
+
+        private void MainTabs_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
+            if (FindAncestorOrSelf<TabItem>(e.OriginalSource as DependencyObject) == null)
+                return;
+
+            _isResettingMainTabsStartupState = false;
+            _mainTabSelectionWasRequestedByUser = true;
+        }
+
+        private void MainTabs_PreviewKeyDown(object sender, KeyEventArgs e) {
+            if (e.Key != Key.Left && e.Key != Key.Right && e.Key != Key.Up && e.Key != Key.Down &&
+                e.Key != Key.Home && e.Key != Key.End && e.Key != Key.Enter && e.Key != Key.Space)
+                return;
+
+            _isResettingMainTabsStartupState = false;
+            _mainTabSelectionWasRequestedByUser = true;
+        }
+
+        private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e) {
+            if (!ReferenceEquals(e.OriginalSource, MainTabs))
+                return;
+
+            if (_isResettingMainTabsStartupState || !_mainTabSelectionWasRequestedByUser) {
+                ResetMainTabsToStartScreen();
+                return;
+            }
+
+            SetStartScreenVisibility(MainTabs.SelectedIndex < 0);
+        }
+
+        private void ResetMainTabsToStartScreen() {
+            if (MainTabs == null)
+                return;
+
+            MainTabs.ApplyTemplate();
+            SetStartScreenVisibility(true);
+
+            MainTabs.SelectionChanged -= MainTabs_SelectionChanged;
+            MainTabs.SelectedItem = null;
+            MainTabs.SelectedIndex = -1;
+
+            foreach (var tabItem in MainTabs.Items.OfType<TabItem>())
+                tabItem.IsSelected = false;
+
+            MainTabs.SelectionChanged += MainTabs_SelectionChanged;
+        }
+
+        private void SetStartScreenVisibility(bool isVisible) {
+            var startScreen = GetMainTabsTemplateElement<FrameworkElement>("StartScreen");
+            if (startScreen != null)
+                startScreen.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void SetStartScreenModelName(string modelName) {
+            var startScreenModelName = GetMainTabsTemplateElement<TextBlock>("StartScreenModelName");
+            if (startScreenModelName != null)
+                startScreenModelName.Text = modelName;
+        }
+
+        private T GetMainTabsTemplateElement<T>(string elementName) where T : FrameworkElement {
+            if (MainTabs == null)
+                return null;
+
+            MainTabs.ApplyTemplate();
+            return MainTabs.Template?.FindName(elementName, MainTabs) as T;
+        }
+
+        private void PartItemsList_Click(object sender, RoutedEventArgs e) {
+            var checkBox = FindAncestorOrSelf<CheckBox>(e.OriginalSource as DependencyObject);
+            if (checkBox == null || !checkBox.IsThreeState)
+                return;
+
+            GroupCheckBox_Click(checkBox, e);
+        }
+
+        private void PartItemsList_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
+            if (IsOriginalSourceInsideCheckBox(e.OriginalSource))
+                return;
+
+            var element = FindNearestFrameworkElementWithDataContext(e.OriginalSource as DependencyObject);
+            if (element == null || element.DataContext == null)
+                return;
+
+            if (HasReadableProperty(element.DataContext, "Items") &&
+                HasReadableProperty(element.DataContext, "GroupName"))
+                GroupHeader_MouseLeftButtonDown(element, e);
+            else
+                PartItem_MouseLeftButtonDown(element, e);
+        }
+
+        private void EdgeGroupsList_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
+            if (IsOriginalSourceInsideCheckBox(e.OriginalSource))
+                return;
+
+            var element = FindNearestFrameworkElementWithDataContext(e.OriginalSource as DependencyObject);
+            if (element?.DataContext is SelectableEdgeGroup)
+                EdgeGroupItem_MouseLeftButtonDown(element, e);
+        }
+
+        private static bool HasReadableProperty(object source, string propertyName) {
+            return source?.GetType().GetProperty(propertyName) != null;
+        }
+
+        private T FindNamedDescendant<T>(string elementName) where T : FrameworkElement {
+            return FindNamedDescendant<T>(this, elementName, new HashSet<DependencyObject>());
+        }
+
+        private static T FindNamedDescendant<T>(DependencyObject parent, string elementName,
+            HashSet<DependencyObject> visited) where T : FrameworkElement {
+            if (parent == null || !visited.Add(parent))
+                return null;
+
+            if (parent is T typedElement && typedElement.Name == elementName)
+                return typedElement;
+
+            var logicalChildren = LogicalTreeHelper.GetChildren(parent).OfType<DependencyObject>().ToList();
+            foreach (var result in logicalChildren.Select(child => FindNamedDescendant<T>(child, elementName, visited))
+                         .Where(result => result != null)) return result;
+
+            int visualChildrenCount;
+            try {
+                visualChildrenCount = VisualTreeHelper.GetChildrenCount(parent);
+            }
+            catch {
+                return null;
+            }
+
+            for (var index = 0; index < visualChildrenCount; index++) {
+                var child = VisualTreeHelper.GetChild(parent, index);
+                var result = FindNamedDescendant<T>(child, elementName, visited);
+                if (result != null)
+                    return result;
+            }
+
+            return null;
+        }
+
+        private static T FindAncestorOrSelf<T>(DependencyObject source) where T : DependencyObject {
+            var current = source;
+
+            while (current != null) {
+                if (current is T typed)
+                    return typed;
+
+                current = GetParentDependencyObject(current);
+            }
+
+            return null;
+        }
+
+        private static FrameworkElement FindNearestFrameworkElementWithDataContext(DependencyObject source) {
+            var current = source;
+
+            while (current != null) {
+                if (current is FrameworkElement frameworkElement && frameworkElement.DataContext != null)
+                    return frameworkElement;
+
+                current = GetParentDependencyObject(current);
+            }
+
+            return null;
+        }
+
+        private static DependencyObject GetParentDependencyObject(DependencyObject source) {
+            if (source == null)
+                return null;
+
+            try {
+                var visualParent = VisualTreeHelper.GetParent(source);
+                if (visualParent != null)
+                    return visualParent;
+            }
+            catch {
+                // ignored
+            }
+
+            try {
+                return LogicalTreeHelper.GetParent(source);
+            }
+            catch {
+                return null;
+            }
         }
 
         private void DrawEdgesButton_Click(object sender, RoutedEventArgs e) {
@@ -154,22 +451,54 @@ namespace HFT_DrawingHelper {
         }
 
         private void ApplySectionSettingsButton_Click(object sender, RoutedEventArgs e) {
-            var viewAttributeName = ViewAttributeNameComboBox.SelectedItem as string ??
-                                    ViewAttributeNameComboBox.Text?.Trim();
-            var markAttributeName = MarkAttributeNameComboBox.SelectedItem as string ??
-                                    MarkAttributeNameComboBox.Text?.Trim();
+            var viewAttributeName = _viewAttributeNameComboBox.SelectedItem as string ??
+                                    _viewAttributeNameComboBox.Text?.Trim();
+            var markAttributeName = _markAttributeNameComboBox.SelectedItem as string ??
+                                    _markAttributeNameComboBox.Text?.Trim();
+            var dimensionAttributeName = _dimensionAttributeNameComboBox.SelectedItem as string ??
+                                         _dimensionAttributeNameComboBox.Text?.Trim();
 
-            if (string.IsNullOrWhiteSpace(viewAttributeName) || string.IsNullOrWhiteSpace(markAttributeName)) {
-                MessageBox.Show("Wybierz ViewAttributeName i MarkAttributeName z listy.");
+            if (string.IsNullOrWhiteSpace(viewAttributeName) ||
+                string.IsNullOrWhiteSpace(markAttributeName) ||
+                string.IsNullOrWhiteSpace(dimensionAttributeName)) {
+                MessageBox.Show("Wybierz ViewAttributeName, MarkAttributeName i DimensionAttributeName z listy.");
                 return;
             }
 
             UpdateSectionAttributeNames(viewAttributeName, markAttributeName);
+            UpdateDimensionAttributeName(dimensionAttributeName);
+            SaveCurrentSectionSettings();
             LoadSectionSettingsIntoPanel();
         }
 
         private void RefreshSectionSettingsButton_Click(object sender, RoutedEventArgs e) {
             ReloadSectionAttributeOptions();
+        }
+
+        private void LoadSavedSectionSettings() {
+            var savedSettings = DrawingAttributeSettingsService.Load();
+            if (savedSettings == null)
+                return;
+
+            UpdateSectionAttributeNames(
+                string.IsNullOrWhiteSpace(savedSettings.ViewAttributeName)
+                    ? _viewAttributeName
+                    : savedSettings.ViewAttributeName,
+                string.IsNullOrWhiteSpace(savedSettings.MarkAttributeName)
+                    ? _markAttributeName
+                    : savedSettings.MarkAttributeName
+            );
+
+            if (!string.IsNullOrWhiteSpace(savedSettings.DimensionAttributeName))
+                UpdateDimensionAttributeName(savedSettings.DimensionAttributeName);
+        }
+
+        private static void SaveCurrentSectionSettings() {
+            DrawingAttributeSettingsService.Save(
+                _viewAttributeName,
+                _markAttributeName,
+                _dimensionAttributeName
+            );
         }
 
         private void ToggleSettingsPanel() {
@@ -193,6 +522,8 @@ namespace HFT_DrawingHelper {
             try {
                 ApplyAttributeCollectionSnapshot(_availableViewAttributeNames, GetAvailableViewAttributeNames());
                 ApplyAttributeCollectionSnapshot(_availableMarkAttributeNames, GetAvailableMarkAttributeNames());
+                ApplyAttributeCollectionSnapshot(_availableDimensionAttributeNames,
+                    GetAvailableDimensionAttributeNames());
                 _sectionAttributeOptionsLoaded = true;
             }
             catch {
@@ -203,16 +534,24 @@ namespace HFT_DrawingHelper {
         }
 
         private void LoadSectionSettingsIntoPanel() {
-            if (ViewAttributeNameComboBox == null || MarkAttributeNameComboBox == null) return;
+            if (_viewAttributeNameComboBox == null ||
+                _markAttributeNameComboBox == null ||
+                _dimensionAttributeNameComboBox == null) return;
 
             EnsureAttributeOptionExists(_availableViewAttributeNames, _viewAttributeName, DefaultViewAttributeName);
             EnsureAttributeOptionExists(_availableMarkAttributeNames, _markAttributeName, DefaultMarkAttributeName);
+            EnsureAttributeOptionExists(_availableDimensionAttributeNames, _dimensionAttributeName,
+                DefaultDimensionAttributeName);
 
-            ViewAttributeNameComboBox.SelectedItem = _availableViewAttributeNames
+            _viewAttributeNameComboBox.SelectedItem = _availableViewAttributeNames
                 .FirstOrDefault(item => string.Equals(item, _viewAttributeName, StringComparison.OrdinalIgnoreCase));
 
-            MarkAttributeNameComboBox.SelectedItem = _availableMarkAttributeNames
+            _markAttributeNameComboBox.SelectedItem = _availableMarkAttributeNames
                 .FirstOrDefault(item => string.Equals(item, _markAttributeName, StringComparison.OrdinalIgnoreCase));
+
+            _dimensionAttributeNameComboBox.SelectedItem = _availableDimensionAttributeNames
+                .FirstOrDefault(
+                    item => string.Equals(item, _dimensionAttributeName, StringComparison.OrdinalIgnoreCase));
         }
 
         private void LoadSectionSettingsFallbackOnly() {
@@ -226,14 +565,12 @@ namespace HFT_DrawingHelper {
                 OrderAttributeNames(new[] { _markAttributeName, DefaultMarkAttributeName })
             );
 
-            LoadSectionSettingsIntoPanel();
-        }
-
-        private SectionAttributeOptionsSnapshot BuildSectionAttributeOptionsSnapshot() {
-            return new SectionAttributeOptionsSnapshot(
-                GetAvailableViewAttributeNames(),
-                GetAvailableMarkAttributeNames()
+            ApplyAttributeCollectionSnapshot(
+                _availableDimensionAttributeNames,
+                OrderAttributeNames(new[] { _dimensionAttributeName, DefaultDimensionAttributeName })
             );
+
+            LoadSectionSettingsIntoPanel();
         }
 
         private static void ApplyAttributeCollectionSnapshot(
@@ -292,6 +629,19 @@ namespace HFT_DrawingHelper {
             return OrderAttributeNames(candidateNames);
         }
 
+        private static List<string> GetAvailableDimensionAttributeNames() {
+            var candidateNames = GetAvailableAttributeNamesFromExtensions(
+                new[] { "dim", "sdim", "adim", "rdim", "cdim" },
+                _dimensionAttributeName,
+                DefaultDimensionAttributeName
+            );
+
+            foreach (var attributeName in GetShallowDimensionAttributeNamesFromStandardDirectories())
+                AddNormalizedAttributeName(candidateNames, attributeName);
+
+            return OrderAttributeNames(candidateNames);
+        }
+
         private static HashSet<string> GetAvailableAttributeNamesFromExtensions(
             IEnumerable<string> candidateExtensions,
             params string[] fallbackNames
@@ -309,6 +659,7 @@ namespace HFT_DrawingHelper {
                                 AddNormalizedAttributeName(candidateNames, fileName);
                     }
                     catch {
+                        // ignored
                     }
 
                     try {
@@ -318,6 +669,7 @@ namespace HFT_DrawingHelper {
                                 AddNormalizedAttributeName(candidateNames, fileName);
                     }
                     catch {
+                        // ignored
                     }
                 }
 
@@ -349,6 +701,28 @@ namespace HFT_DrawingHelper {
             return result;
         }
 
+        private static IEnumerable<string> GetShallowDimensionAttributeNamesFromStandardDirectories() {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            List<string> directories;
+            try {
+                directories = EnvironmentFiles.GetStandardPropertyFileDirectories();
+            }
+            catch {
+                return result;
+            }
+
+            if (directories == null || directories.Count == 0)
+                return result;
+
+            foreach (var directory in directories.Where(directory => !string.IsNullOrWhiteSpace(directory)))
+            foreach (var candidateDirectory in GetShallowSearchDirectories(directory))
+            foreach (var attributeName in EnumerateTopLevelDimensionAttributeNames(candidateDirectory))
+                result.Add(attributeName);
+
+            return result;
+        }
+
         private static IEnumerable<string> GetShallowSearchDirectories(string directory) {
             var result = new List<string>();
 
@@ -374,6 +748,7 @@ namespace HFT_DrawingHelper {
                     }
             }
             catch {
+                // ignored
             }
 
             return result;
@@ -400,6 +775,34 @@ namespace HFT_DrawingHelper {
                 }
             }
             catch {
+                // ignored
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<string> EnumerateTopLevelDimensionAttributeNames(string directory) {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (string.IsNullOrWhiteSpace(directory) || !EnvironmentFiles.IsValidDirectory(directory))
+                return result;
+
+            try {
+                foreach (var filePath in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)) {
+                    var fileName = Path.GetFileName(filePath);
+                    if (string.IsNullOrWhiteSpace(fileName))
+                        continue;
+
+                    if (!LooksLikeDimensionAttributeFile(fileName))
+                        continue;
+
+                    var normalizedName = NormalizeAttributeName(fileName);
+                    if (!string.IsNullOrWhiteSpace(normalizedName))
+                        result.Add(normalizedName);
+                }
+            }
+            catch {
+                // ignored
             }
 
             return result;
@@ -422,130 +825,33 @@ namespace HFT_DrawingHelper {
             if (normalizedName.IndexOf("schnitt", StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
 
-            if (normalizedName.IndexOf("mark", StringComparison.OrdinalIgnoreCase) >= 0)
+            return normalizedName.IndexOf("mark", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   string.Equals(normalizedName, "standard", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool LooksLikeDimensionAttributeFile(string fileName) {
+            if (string.IsNullOrWhiteSpace(fileName))
+                return false;
+
+            var normalizedName = NormalizeAttributeName(fileName);
+            if (string.IsNullOrWhiteSpace(normalizedName))
+                return false;
+
+            var extension = Path.GetExtension(fileName)?.TrimStart('.');
+            if (!string.IsNullOrWhiteSpace(extension)) {
+                var dimensionExtensions = new[] { "dim", "sdim", "adim", "rdim", "cdim" };
+                if (dimensionExtensions.Any(item => string.Equals(item, extension, StringComparison.OrdinalIgnoreCase)))
+                    return true;
+            }
+
+            if (normalizedName.IndexOf("dim", StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
 
-            return string.Equals(normalizedName, "standard", StringComparison.OrdinalIgnoreCase);
-        }
+            if (normalizedName.IndexOf("dimension", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
 
-        private static void AddCandidateIfLoadable(
-            ICollection<string> targetCollection,
-            string filePath,
-            Func<string, bool> canLoadAttributes
-        ) {
-            var normalizedValue = NormalizeAttributeName(Path.GetFileName(filePath));
-            if (string.IsNullOrWhiteSpace(normalizedValue)) return;
-            if (!canLoadAttributes(normalizedValue)) return;
-
-            targetCollection.Add(normalizedValue);
-        }
-
-        private static IEnumerable<string> EnumerateLikelyPropertyFiles() {
-            List<string> directories;
-
-            try {
-                directories = EnvironmentFiles.GetStandardPropertyFileDirectories();
-            }
-            catch {
-                return Enumerable.Empty<string>();
-            }
-
-            if (directories == null || directories.Count == 0)
-                return Enumerable.Empty<string>();
-
-            var uniqueFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var result = new List<string>();
-
-            foreach (var directory in directories.Where(directory => !string.IsNullOrWhiteSpace(directory))) {
-                foreach (var filePath in EnumerateFilesFromDirectoryAndAttributes(directory))
-                    if (uniqueFiles.Add(filePath))
-                        result.Add(filePath);
-
-                foreach (var subDirectory in EnumerateImmediateDirectories(directory)
-                             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
-                foreach (var filePath in EnumerateFilesFromDirectoryAndAttributes(subDirectory))
-                    if (uniqueFiles.Add(filePath))
-                        result.Add(filePath);
-            }
-
-            return result;
-        }
-
-        private static IEnumerable<string> EnumerateFilesFromDirectoryAndAttributes(string directory) {
-            var result = new List<string>();
-
-            if (string.IsNullOrWhiteSpace(directory))
-                return result;
-
-            foreach (var currentDirectory in GetDirectoryCandidates(directory))
-            foreach (var filePath in EnumerateTopLevelFiles(currentDirectory))
-                result.Add(filePath);
-
-            return result;
-        }
-
-        private static IEnumerable<string> GetDirectoryCandidates(string directory) {
-            var result = new List<string>();
-
-            if (string.IsNullOrWhiteSpace(directory))
-                return result;
-
-            if (EnvironmentFiles.IsValidDirectory(directory))
-                result.Add(directory);
-
-            var attributesDirectory = Path.Combine(directory, "attributes");
-            if (EnvironmentFiles.IsValidDirectory(attributesDirectory))
-                result.Add(attributesDirectory);
-
-            return result;
-        }
-
-        private static IEnumerable<string> EnumerateImmediateDirectories(string directory) {
-            if (string.IsNullOrWhiteSpace(directory) || !EnvironmentFiles.IsValidDirectory(directory))
-                return Enumerable.Empty<string>();
-
-            try {
-                return Directory.EnumerateDirectories(directory).ToList();
-            }
-            catch {
-                return Enumerable.Empty<string>();
-            }
-        }
-
-        private static IEnumerable<string> EnumerateTopLevelFiles(string directory) {
-            if (string.IsNullOrWhiteSpace(directory) || !EnvironmentFiles.IsValidDirectory(directory))
-                return Enumerable.Empty<string>();
-
-            try {
-                return Directory.EnumerateFiles(directory, "*.*", SearchOption.TopDirectoryOnly).ToList();
-            }
-            catch {
-                return Enumerable.Empty<string>();
-            }
-        }
-
-        private static bool CanLoadViewAttributes(string attributeName) {
-            if (string.IsNullOrWhiteSpace(attributeName)) return false;
-
-            try {
-                var attributes = new TSD.View.ViewAttributes();
-                return attributes.LoadAttributes(attributeName.Trim());
-            }
-            catch {
-                return false;
-            }
-        }
-
-        private static bool CanLoadMarkAttributes(string attributeName) {
-            if (string.IsNullOrWhiteSpace(attributeName)) return false;
-
-            try {
-                var attributes = new TSD.SectionMarkBase.SectionMarkAttributes();
-                return attributes.LoadAttributes(attributeName.Trim());
-            }
-            catch {
-                return false;
-            }
+            return normalizedName.IndexOf("wymiar", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   string.Equals(normalizedName, "standard", StringComparison.OrdinalIgnoreCase);
         }
 
         private static void AddNormalizedAttributeName(ICollection<string> targetCollection, string value) {
@@ -574,18 +880,81 @@ namespace HFT_DrawingHelper {
                 .ToList();
         }
 
-        private sealed class SectionAttributeOptionsSnapshot {
-            public SectionAttributeOptionsSnapshot(
-                IEnumerable<string> viewAttributeNames,
-                IEnumerable<string> markAttributeNames
-            ) {
-                ViewAttributeNames = OrderAttributeNames(viewAttributeNames ?? Enumerable.Empty<string>());
-                MarkAttributeNames = OrderAttributeNames(markAttributeNames ?? Enumerable.Empty<string>());
+        private sealed class SavedDrawingAttributeSettings {
+            public string ViewAttributeName { get; set; }
+            public string MarkAttributeName { get; set; }
+            public string DimensionAttributeName { get; set; }
+        }
+
+        private static class DrawingAttributeSettingsService {
+            private static readonly string SettingsPath =
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "HFT.DrawingHelper",
+                    "drawing_attributes.txt"
+                );
+
+            public static SavedDrawingAttributeSettings Load() {
+                try {
+                    if (!File.Exists(SettingsPath))
+                        return null;
+
+                    var savedSettings = new SavedDrawingAttributeSettings();
+                    var lines = File.ReadAllLines(SettingsPath);
+
+                    foreach (var line in lines) {
+                        if (string.IsNullOrWhiteSpace(line))
+                            continue;
+
+                        var separatorIndex = line.IndexOf('=');
+                        if (separatorIndex < 0)
+                            continue;
+
+                        var key = line.Substring(0, separatorIndex).Trim();
+                        var value = line.Substring(separatorIndex + 1).Trim();
+
+                        if (string.Equals(key, "ViewAttributeName", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.ViewAttributeName = value;
+                        else if (string.Equals(key, "MarkAttributeName", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.MarkAttributeName = value;
+                        else if (string.Equals(key, "DimensionAttributeName", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.DimensionAttributeName = value;
+                    }
+
+                    return savedSettings;
+                }
+                catch {
+                    return null;
+                }
             }
 
-            public IReadOnlyList<string> ViewAttributeNames { get; }
+            public static void Save(
+                string viewAttributeName,
+                string markAttributeName,
+                string dimensionAttributeName
+            ) {
+                try {
+                    var directoryPath = Path.GetDirectoryName(SettingsPath);
+                    if (!string.IsNullOrEmpty(directoryPath))
+                        Directory.CreateDirectory(directoryPath);
 
-            public IReadOnlyList<string> MarkAttributeNames { get; }
+                    File.WriteAllLines(
+                        SettingsPath,
+                        new[] {
+                            @"ViewAttributeName=" + NormalizeSavedValue(viewAttributeName),
+                            @"MarkAttributeName=" + NormalizeSavedValue(markAttributeName),
+                            @"DimensionAttributeName=" + NormalizeSavedValue(dimensionAttributeName)
+                        }
+                    );
+                }
+                catch {
+                    // ignored
+                }
+            }
+
+            private static string NormalizeSavedValue(string value) {
+                return string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+            }
         }
 
         private enum SidePanelMode {
@@ -634,10 +1003,6 @@ namespace HFT_DrawingHelper {
         }
 
         #region Edge Preview
-
-        private void EdgeGroupCheckBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
-            e.Handled = false;
-        }
 
         private void EdgeGroupItem_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
             if (IsOriginalSourceInsideCheckBox(e.OriginalSource)) return;
@@ -855,62 +1220,74 @@ namespace HFT_DrawingHelper {
         }
 
         private List<DimensionOptions> BuildDimensionOptionsFromUi() {
-            var dimensionType = AngledDimensionRadioButton.IsChecked == true
+            var dimensionType = _angledDimensionRadioButton.IsChecked == true
                 ? DimensionType.Angled
-                : CurvedDimensionRadioButton.IsChecked == true
+                : _curvedDimensionRadioButton.IsChecked == true
                     ? DimensionType.Curved
                     : DimensionType.Straight;
 
-            var horizontalScope = HorizontalTotalDimensionCheckBox.IsChecked == true
+            var horizontalScope = _horizontalTotalDimensionCheckBox.IsChecked == true
                 ? DimensionScope.Overall
                 : DimensionScope.PerElement;
 
-            var verticalScope = VerticalTotalDimensionCheckBox.IsChecked == true
+            var verticalScope = _verticalTotalDimensionCheckBox.IsChecked == true
                 ? DimensionScope.Overall
                 : DimensionScope.PerElement;
 
-            var useShortExtensionLine = ShortExtensionLineCheckBox.IsChecked == true;
+            var useShortExtensionLine = _shortExtensionLineCheckBox.IsChecked == true;
+            var dimensionAttributeName = _dimensionAttributeNameComboBox?.SelectedItem as string ??
+                                         _dimensionAttributeNameComboBox?.Text?.Trim();
+
+            if (!string.IsNullOrWhiteSpace(dimensionAttributeName))
+                UpdateDimensionAttributeName(dimensionAttributeName);
+
+            dimensionAttributeName = GetDimensionAttributeNameOrDefault(_dimensionAttributeName,
+                DefaultDimensionAttributeName);
 
             var optionsList = new List<DimensionOptions>();
 
             AddDimensionOptionIfChecked(
                 optionsList,
-                DimensionAboveCheckBox.IsChecked == true,
+                _dimensionAboveCheckBox.IsChecked == true,
                 dimensionType,
                 DimensionAxis.Horizontal,
                 DimensionPlacement.Above,
                 horizontalScope,
-                useShortExtensionLine
+                useShortExtensionLine,
+                dimensionAttributeName
             );
 
             AddDimensionOptionIfChecked(
                 optionsList,
-                DimensionBelowCheckBox.IsChecked == true,
+                _dimensionBelowCheckBox.IsChecked == true,
                 dimensionType,
                 DimensionAxis.Horizontal,
                 DimensionPlacement.Below,
                 horizontalScope,
-                useShortExtensionLine
+                useShortExtensionLine,
+                dimensionAttributeName
             );
 
             AddDimensionOptionIfChecked(
                 optionsList,
-                DimensionRightCheckBox.IsChecked == true,
+                _dimensionRightCheckBox.IsChecked == true,
                 dimensionType,
                 DimensionAxis.Vertical,
                 DimensionPlacement.Right,
                 verticalScope,
-                useShortExtensionLine
+                useShortExtensionLine,
+                dimensionAttributeName
             );
 
             AddDimensionOptionIfChecked(
                 optionsList,
-                DimensionLeftCheckBox.IsChecked == true,
+                _dimensionLeftCheckBox.IsChecked == true,
                 dimensionType,
                 DimensionAxis.Vertical,
                 DimensionPlacement.Left,
                 verticalScope,
-                useShortExtensionLine
+                useShortExtensionLine,
+                dimensionAttributeName
             );
 
             return optionsList;
@@ -923,15 +1300,34 @@ namespace HFT_DrawingHelper {
                 ? Visibility.Collapsed
                 : Visibility.Visible;
 
-            if (PartSelectionPanel != null)
-                PartSelectionPanel.Visibility = sidePanelMode == SidePanelMode.Parts
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
+            SetSidePanelContentVisibility(
+                "PartSelectionPanel",
+                "PartsSidePanelHost",
+                sidePanelMode == SidePanelMode.Parts
+            );
 
-            if (EdgeSelectionPanel != null)
-                EdgeSelectionPanel.Visibility = sidePanelMode == SidePanelMode.Edges
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
+            SetSidePanelContentVisibility(
+                "EdgeSelectionPanel",
+                "EdgesSidePanelHost",
+                sidePanelMode == SidePanelMode.Edges
+            );
+        }
+
+        private void SetSidePanelContentVisibility(string panelElementName, string hostElementName, bool isVisible) {
+            var visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+
+            var panelElement = FindNamedDescendant<FrameworkElement>(panelElementName);
+            if (panelElement != null)
+                panelElement.Visibility = visibility;
+
+            var hostElement = FindNamedDescendant<ContentControl>(hostElementName);
+            if (hostElement == null)
+                return;
+
+            hostElement.Visibility = visibility;
+
+            if (hostElement.Content is FrameworkElement contentElement)
+                contentElement.Visibility = visibility;
         }
 
         private static List<SelectableEdgeGroup> BuildSelectableEdgeGroups(TSD.DrawingHandler drawingHandler) {
@@ -1033,7 +1429,8 @@ namespace HFT_DrawingHelper {
             DimensionAxis axis,
             DimensionPlacement placement,
             DimensionScope scope,
-            bool useShortExtensionLine
+            bool useShortExtensionLine,
+            string dimensionAttributeName
         ) {
             if (!isChecked) return;
 
@@ -1042,7 +1439,8 @@ namespace HFT_DrawingHelper {
                 Axis = axis,
                 Placement = placement,
                 Scope = scope,
-                UseShortExtensionLine = useShortExtensionLine
+                UseShortExtensionLine = useShortExtensionLine,
+                AttributeFileName = dimensionAttributeName
             });
         }
 

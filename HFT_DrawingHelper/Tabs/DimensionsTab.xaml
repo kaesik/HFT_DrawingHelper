@@ -1,0 +1,150 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="../Resources/MainWindowStyles.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+    <StackPanel x:Key="DimensionsTabContent" x:Shared="False" Margin="0,12,0,0">
+        <Button x:Name="ShowSelectedPartsButton"
+                                Content="Pokaż zaznaczone"
+                                Style="{DynamicResource SecondaryButton}"
+                                HorizontalAlignment="Stretch"
+                                Height="32"
+                                Margin="0,0,0,10" />
+
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="90" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0"
+                                       Text="Typ"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       FontSize="11"
+                                       VerticalAlignment="Center" />
+
+                            <Grid Grid.Column="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110" />
+                                    <ColumnDefinition Width="110" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <RadioButton Grid.Column="0"
+                                             Content="Prostoliniowy"
+                                             Style="{DynamicResource HftRadioButton}"
+                                             GroupName="DimType"
+                                             IsChecked="True" />
+
+                                <RadioButton x:Name="AngledDimensionRadioButton"
+                                             Grid.Column="1"
+                                             Content="Pod kątem"
+                                             Style="{DynamicResource HftRadioButton}"
+                                             GroupName="DimType" />
+
+                                <RadioButton x:Name="CurvedDimensionRadioButton"
+                                             Grid.Column="2"
+                                             Content="Łukowy"
+                                             Style="{DynamicResource HftRadioButton}"
+                                             GroupName="DimType" />
+                            </Grid>
+                        </Grid>
+
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="90" />
+                                <ColumnDefinition Width="110" />
+                                <ColumnDefinition Width="110" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0"
+                                       Text="Poziom"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       FontSize="11"
+                                       VerticalAlignment="Center" />
+
+                            <CheckBox x:Name="DimensionAboveCheckBox"
+                                      Grid.Column="1"
+                                      Content="Powyżej"
+                                      Style="{DynamicResource HftCheckBox}"
+                                      IsChecked="True"
+                                      VerticalAlignment="Center" />
+
+                            <CheckBox x:Name="DimensionBelowCheckBox"
+                                      Grid.Column="2"
+                                      Content="Poniżej"
+                                      Style="{DynamicResource HftCheckBox}"
+                                      VerticalAlignment="Center" />
+
+                            <CheckBox x:Name="HorizontalTotalDimensionCheckBox"
+                                      Grid.Column="3"
+                                      Content="Całkowity"
+                                      Style="{DynamicResource HftCheckBox}"
+                                      IsChecked="True"
+                                      VerticalAlignment="Center" />
+                        </Grid>
+
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="90" />
+                                <ColumnDefinition Width="110" />
+                                <ColumnDefinition Width="110" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0"
+                                       Text="Pion"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       FontSize="11"
+                                       VerticalAlignment="Center" />
+
+                            <CheckBox x:Name="DimensionRightCheckBox"
+                                      Grid.Column="1"
+                                      Content="Prawa"
+                                      Style="{DynamicResource HftCheckBox}"
+                                      IsChecked="True"
+                                      VerticalAlignment="Center" />
+
+                            <CheckBox x:Name="DimensionLeftCheckBox"
+                                      Grid.Column="2"
+                                      Content="Lewa"
+                                      Style="{DynamicResource HftCheckBox}"
+                                      VerticalAlignment="Center" />
+
+                            <CheckBox x:Name="VerticalTotalDimensionCheckBox"
+                                      Grid.Column="3"
+                                      Content="Całkowity"
+                                      Style="{DynamicResource HftCheckBox}"
+                                      IsChecked="True"
+                                      VerticalAlignment="Center" />
+                        </Grid>
+
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="90" />
+                                <ColumnDefinition Width="110" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0"
+                                       Text="Linia"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       FontSize="11"
+                                       VerticalAlignment="Center" />
+
+                            <CheckBox x:Name="ShortExtensionLineCheckBox"
+                                      Grid.Column="1"
+                                      Content="Krótka"
+                                      Style="{DynamicResource HftCheckBox}"
+                                      VerticalAlignment="Center"
+                                      ToolTip="Ukrywa linie pomocnicze wymiaru." />
+                        </Grid>
+
+                        <Button x:Name="AddDimensionsButton"
+                                Content="Dodaj wymiary"
+                                Style="{DynamicResource PrimaryButton}"
+                                HorizontalAlignment="Stretch"
+                                Height="32" />
+    </StackPanel>
+</ResourceDictionary>

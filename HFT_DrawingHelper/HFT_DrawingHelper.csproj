@@ -165,16 +165,13 @@
         </ApplicationDefinition>
         <Compile Include="MainWindow.Geometry.cs"/>
         <Compile Include="MainWindow.PartSelector.cs"/>
+        <Compile Include="MainWindow.xaml.cs"/>
         <Compile Include="SelectedPartGroup.cs"/>
         <Compile Include="SelectedPartItem.cs"/>
         <Compile Include="TeklaConnectionErrorWindow.xaml.cs">
             <DependentUpon>TeklaConnectionErrorWindow.xaml</DependentUpon>
         </Compile>
         <Compile Include="ThemeService.cs"/>
-        <Page Include="MainWindow.xaml">
-            <Generator>MSBuild:Compile</Generator>
-            <SubType>Designer</SubType>
-        </Page>
         <Compile Include="App.xaml.cs">
             <DependentUpon>App.xaml</DependentUpon>
             <SubType>Code</SubType>
@@ -182,10 +179,14 @@
         <Compile Include="MainWindow.Dimensions.cs"/>
         <Compile Include="MainWindow.Draw.cs"/>
         <Compile Include="MainWindow.Sections.cs"/>
-        <Compile Include="MainWindow.xaml.cs">
-            <DependentUpon>MainWindow.xaml</DependentUpon>
-            <SubType>Code</SubType>
-        </Compile>
+        <Page Include="MainWindow.xaml"/>
+        <Page Include="Resources\MainWindowStyles.xaml"/>
+        <Page Include="SidePanels\EdgesSidePanel.xaml"/>
+        <Page Include="SidePanels\PartsSidePanel.xaml"/>
+        <Page Include="SidePanels\SettingsSidePanel.xaml"/>
+        <Page Include="Tabs\DimensionsTab.xaml"/>
+        <Page Include="Tabs\EdgesTab.xaml"/>
+        <Page Include="Tabs\SectionsTab.xaml"/>
         <Page Include="TeklaConnectionErrorWindow.xaml"/>
         <Page Include="Themes\DarkTheme.xaml"/>
         <Page Include="Themes\LightTheme.xaml"/>

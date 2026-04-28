@@ -997,13 +997,16 @@ namespace HFT_DrawingHelper {
                 pointList.Add(new TSG.Point(point.X, point.Y, 0));
 
             var curvedHandler = new TSD.CurvedDimensionSetHandler();
+            var attributes = CreateCurvedDimensionAttributes(options);
+
             curvedHandler.CreateCurvedDimensionSetRadial(
                 selectedView,
                 options.UserArcStart,
                 options.UserArcMid,
                 options.UserArcEnd,
                 pointList,
-                offsetMillimeters
+                offsetMillimeters,
+                attributes
             );
         }
 
@@ -1437,14 +1440,82 @@ namespace HFT_DrawingHelper {
         private static TSD.StraightDimensionSet.StraightDimensionSetAttributes CreateStraightDimensionAttributes(
             DimensionOptions options
         ) {
-            var attributes = new TSD.StraightDimensionSet.StraightDimensionSetAttributes {
-                ShortDimension = TSD.DimensionSetBaseAttributes.ShortDimensionTypes.Outside,
-                ExtensionLine = options?.UseShortExtensionLine == true
-                    ? TSD.DimensionSetBaseAttributes.ExtensionLineTypes.Yes
-                    : TSD.DimensionSetBaseAttributes.ExtensionLineTypes.No
-            };
+            var attributesFileName = GetDimensionAttributeNameOrDefault(
+                options?.AttributeFileName,
+                DefaultDimensionAttributeName
+            );
+
+            var attributes = new TSD.StraightDimensionSet.StraightDimensionSetAttributes(
+                null,
+                attributesFileName
+            );
+
+            ApplyCommonDimensionAttributes(attributes, options);
 
             return attributes;
+        }
+
+        private static TSD.CurvedDimensionSetRadial.CurvedDimensionSetRadialAttributes CreateCurvedDimensionAttributes(
+            DimensionOptions options
+        ) {
+            var attributesFileName = GetDimensionAttributeNameOrDefault(
+                options?.AttributeFileName,
+                DefaultDimensionAttributeName
+            );
+
+            var attributes = new TSD.CurvedDimensionSetRadial.CurvedDimensionSetRadialAttributes(
+                attributesFileName
+            );
+
+            ApplyCommonDimensionAttributes(attributes, options);
+
+            return attributes;
+        }
+
+        private static void ApplyCommonDimensionAttributes(object attributes, DimensionOptions options) {
+            if (attributes == null)
+                return;
+
+            TrySetEnumAttributeValue(attributes, "ShortDimension", "Outside");
+
+            var extensionLineValue = options?.UseShortExtensionLine == true
+                ? "Yes"
+                : "No";
+
+            TrySetEnumAttributeValue(attributes, "ExtensionLine", extensionLineValue);
+        }
+
+        private static void TrySetEnumAttributeValue(
+            object attributes,
+            string propertyName,
+            string enumValueName
+        ) {
+            try {
+                var property = attributes.GetType().GetProperty(propertyName);
+                if (property == null || !property.CanWrite)
+                    return;
+
+                var propertyType = property.PropertyType;
+                if (!propertyType.IsEnum)
+                    return;
+
+                var enumValue = Enum.Parse(propertyType, enumValueName);
+                property.SetValue(attributes, enumValue, null);
+            }
+            catch {
+                // ignored
+            }
+        }
+
+        private static void UpdateDimensionAttributeName(string dimensionAttributeName) {
+            _dimensionAttributeName = GetDimensionAttributeNameOrDefault(
+                dimensionAttributeName,
+                DefaultDimensionAttributeName
+            );
+        }
+
+        private static string GetDimensionAttributeNameOrDefault(string value, string defaultValue) {
+            return string.IsNullOrWhiteSpace(value) ? defaultValue : value.Trim();
         }
 
         private static void CreateDimensionSet(
@@ -1462,27 +1533,30 @@ namespace HFT_DrawingHelper {
                     return;
 
                 var curvedHandler = new TSD.CurvedDimensionSetHandler();
+                var curvedDimensionAttributes = CreateCurvedDimensionAttributes(options);
+
                 curvedHandler.CreateCurvedDimensionSetRadial(
                     selectedView,
                     options.UserArcStart,
                     options.UserArcMid,
                     options.UserArcEnd,
                     dimensionPoints,
-                    offsetMillimeters
+                    offsetMillimeters,
+                    curvedDimensionAttributes
                 );
 
                 return;
             }
 
             var straightHandler = new TSD.StraightDimensionSetHandler();
-            var attributes = CreateStraightDimensionAttributes(options);
+            var straightDimensionAttributes = CreateStraightDimensionAttributes(options);
 
             straightHandler.CreateDimensionSet(
                 selectedView,
                 dimensionPoints,
                 directionVector,
                 offsetMillimeters,
-                attributes
+                straightDimensionAttributes
             );
         }
 
@@ -1497,6 +1571,8 @@ namespace HFT_DrawingHelper {
         private const double MinimumPickedVectorLengthMillimeters = 1.0;
         private const double SignificantCornerTurnAngleDegrees = 15.0;
         private const double MinimumOutlineSegmentLengthMillimeters = 1.0;
+        private const string DefaultDimensionAttributeName = "standard";
+        private static string _dimensionAttributeName = DefaultDimensionAttributeName;
 
         #endregion
 
@@ -1531,6 +1607,7 @@ namespace HFT_DrawingHelper {
             public DimensionPlacement Placement { get; set; }
             public DimensionScope Scope { get; set; }
             public bool UseShortExtensionLine { get; set; }
+            public string AttributeFileName { get; set; }
             public TSG.Point UserArcStart { get; set; }
             public TSG.Point UserArcMid { get; set; }
             public TSG.Point UserArcEnd { get; set; }

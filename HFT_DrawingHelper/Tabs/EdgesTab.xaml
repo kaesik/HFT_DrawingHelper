@@ -1,0 +1,35 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="../Resources/MainWindowStyles.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+    <StackPanel x:Key="EdgesTabContent" x:Shared="False" Margin="0,12,0,0">
+        <TextBlock Text="Narzędzia do rysowania i wybierania krawędzi."
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,10" />
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Button x:Name="DrawEdgesButton"
+                    Grid.Column="0"
+                    Content="Rysuj krawędzie"
+                    Style="{DynamicResource PrimaryButton}"
+                    HorizontalAlignment="Stretch"
+                    Height="32" />
+
+            <Button x:Name="GetEdgesButton"
+                    Grid.Column="2"
+                    Content="Zdobądź krawędzie"
+                    Style="{DynamicResource SecondaryButton}"
+                    HorizontalAlignment="Stretch"
+                    Height="32" />
+        </Grid>
+    </StackPanel>
+</ResourceDictionary>

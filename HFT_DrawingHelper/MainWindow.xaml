@@ -24,6 +24,7 @@
                 <ResourceDictionary Source="Tabs/EdgesTab.xaml" />
                 <ResourceDictionary Source="Tabs/SectionsTab.xaml" />
                 <ResourceDictionary Source="Tabs/DimensionsTab.xaml" />
+                <ResourceDictionary Source="Tabs/ViewTab.xaml" />
                 <ResourceDictionary Source="SidePanels/SettingsSidePanel.xaml" />
                 <ResourceDictionary Source="SidePanels/PartsSidePanel.xaml" />
                 <ResourceDictionary Source="SidePanels/EdgesSidePanel.xaml" />
@@ -307,6 +308,10 @@
                     <TabItem Header="Wymiarowanie"
                              Style="{StaticResource HftTabItem}">
                         <ContentControl Content="{StaticResource DimensionsTabContent}" />
+                    </TabItem>
+                    <TabItem Header="Widok"
+                             Style="{StaticResource HftTabItem}">
+                        <ContentControl Content="{StaticResource ViewTabContent}" />
                     </TabItem>
                 </TabControl>
 

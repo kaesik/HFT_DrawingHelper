@@ -44,14 +44,12 @@ namespace HFT_DrawingHelper {
         private CheckBox _dimensionLeftCheckBox;
         private CheckBox _dimensionRightCheckBox;
         private ListBox _edgeGroupsList;
-        private FrameworkElement _edgeSelectionPanel;
         private CheckBox _horizontalTotalDimensionCheckBox;
 
         private bool _isResettingMainTabsStartupState;
         private bool _mainTabSelectionWasRequestedByUser;
         private ComboBox _markAttributeNameComboBox;
         private ListBox _partItemsList;
-        private FrameworkElement _partSelectionPanel;
 
         private bool _sectionAttributeOptionsLoaded;
         private CheckBox _shortExtensionLineCheckBox;
@@ -93,13 +91,14 @@ namespace HFT_DrawingHelper {
             _dimensionAttributeNameComboBox = FindNamedDescendant<ComboBox>("DimensionAttributeNameComboBox");
             _partItemsList = FindNamedDescendant<ListBox>("PartItemsList");
             _edgeGroupsList = FindNamedDescendant<ListBox>("EdgeGroupsList");
-            _partSelectionPanel = FindNamedDescendant<FrameworkElement>("PartSelectionPanel");
-            _edgeSelectionPanel = FindNamedDescendant<FrameworkElement>("EdgeSelectionPanel");
+            FindNamedDescendant<FrameworkElement>("PartSelectionPanel");
+            FindNamedDescendant<FrameworkElement>("EdgeSelectionPanel");
             FindNamedDescendant<Button>("DrawEdgesButton");
             FindNamedDescendant<Button>("GetEdgesButton");
             FindNamedDescendant<Button>("AddSectionsButton");
             FindNamedDescendant<Button>("ShowSelectedPartsButton");
             FindNamedDescendant<Button>("AddDimensionsButton");
+            FindNamedDescendant<Button>("RotateViewByTwoPointsButton");
             FindNamedDescendant<Button>("RefreshSectionSettingsButton");
             FindNamedDescendant<Button>("ApplySectionSettingsButton");
             _angledDimensionRadioButton = FindNamedDescendant<RadioButton>("AngledDimensionRadioButton");
@@ -122,6 +121,7 @@ namespace HFT_DrawingHelper {
             AddClickHandler("AddSectionsButton", AddSectionsButton_Click);
             AddClickHandler("ShowSelectedPartsButton", ShowSelectedPartsButton_Click);
             AddClickHandler("AddDimensionsButton", AddDimensionsButton_Click);
+            AddClickHandler("RotateViewByTwoPointsButton", RotateViewByTwoPoints_Click);
             AddClickHandler("ClosePartsSidePanelButton", CloseSidePanelButton_Click);
             AddClickHandler("CloseEdgesSidePanelButton", CloseSidePanelButton_Click);
             AddClickHandler("SelectAllPartsButton", SelectAllPartsButton_Click);
@@ -837,7 +837,7 @@ namespace HFT_DrawingHelper {
             if (string.IsNullOrWhiteSpace(normalizedName))
                 return false;
 
-            var extension = Path.GetExtension(fileName)?.TrimStart('.');
+            var extension = Path.GetExtension(fileName).TrimStart('.');
             if (!string.IsNullOrWhiteSpace(extension)) {
                 var dimensionExtensions = new[] { "dim", "sdim", "adim", "rdim", "cdim" };
                 if (dimensionExtensions.Any(item => string.Equals(item, extension, StringComparison.OrdinalIgnoreCase)))
@@ -1332,7 +1332,7 @@ namespace HFT_DrawingHelper {
 
         private static List<SelectableEdgeGroup> BuildSelectableEdgeGroups(TSD.DrawingHandler drawingHandler) {
             var selectedDrawingParts = FilterIgnoredSectionDrawingParts(GetSelectedDrawingParts(drawingHandler));
-            TSD.View targetView = null;
+            TSD.View targetView;
 
             if (selectedDrawingParts.Count > 0) {
                 targetView = GetCommonViewFromSelectedParts(selectedDrawingParts);

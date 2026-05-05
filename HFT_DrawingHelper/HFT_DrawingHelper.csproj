@@ -164,6 +164,7 @@
             <SubType>Designer</SubType>
         </ApplicationDefinition>
         <Compile Include="MainWindow.Geometry.cs"/>
+        <Compile Include="MainWindow.Marks.cs"/>
         <Compile Include="MainWindow.PartSelector.cs"/>
         <Compile Include="MainWindow.View.cs"/>
         <Compile Include="MainWindow.xaml.cs"/>
@@ -187,6 +188,7 @@
         <Page Include="SidePanels\SettingsSidePanel.xaml"/>
         <Page Include="Tabs\DimensionsTab.xaml"/>
         <Page Include="Tabs\EdgesTab.xaml"/>
+        <Page Include="Tabs\MarksTab.xaml"/>
         <Page Include="Tabs\SectionsTab.xaml"/>
         <Page Include="Tabs\ViewTab.xaml"/>
         <Page Include="TeklaConnectionErrorWindow.xaml"/>

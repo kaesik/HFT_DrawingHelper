@@ -4,242 +4,331 @@
         <ResourceDictionary Source="../Resources/MainWindowStyles.xaml" />
     </ResourceDictionary.MergedDictionaries>
 
+    <!-- ═══ HFT TextBox: ControlBgBrush, CornerRadius 4, AccentColor focus ═══ -->
+    <Style x:Key="SettingsTextBoxStyle" TargetType="TextBox">
+        <Setter Property="Background"               Value="{DynamicResource ControlBgBrush}"/>
+        <Setter Property="Foreground"               Value="{DynamicResource TextPrimaryBrush}"/>
+        <Setter Property="BorderBrush"              Value="{DynamicResource BorderColorBrush}"/>
+        <Setter Property="BorderThickness"          Value="1"/>
+        <Setter Property="Padding"                  Value="10,0"/>
+        <Setter Property="FontFamily"               Value="Segoe UI Variable, Segoe UI"/>
+        <Setter Property="FontSize"                 Value="12"/>
+        <Setter Property="CaretBrush"               Value="{DynamicResource TextPrimaryBrush}"/>
+        <Setter Property="SelectionBrush"           Value="{DynamicResource AccentColorBrush}"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="border"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="4">
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="Background"
+                                    Value="{DynamicResource ControlHoverBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsFocused" Value="True">
+                            <Setter TargetName="border" Property="BorderBrush"
+                                    Value="{DynamicResource AccentColorBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Grid x:Key="SettingsSidePanelContent"
           x:Shared="False"
           Width="260"
           Margin="14,10,14,14">
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0"
-              Margin="0,0,0,10">
+        <!-- ═══ Panel header — tekst aktualizowany z code-behind ═══ -->
+        <Grid Grid.Row="0" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <TextBlock Grid.Column="0"
-                       Text="USTAWIENIA ATRYBUTÓW"
+            <TextBlock x:Name="SettingsPanelHeaderText"
+                       Grid.Column="0"
+                       Text="USTAWIENIA"
                        Foreground="{DynamicResource TextTertiaryBrush}"
                        FontSize="10"
                        FontWeight="SemiBold"
-                       VerticalAlignment="Center" />
+                       VerticalAlignment="Center"/>
 
             <Button Grid.Column="1"
                     x:Name="CloseSettingsPanelButton"
                     Style="{DynamicResource IconButton}"
                     Content="&#xE8BB;"
-                    Width="22"
-                    Height="22"
-                    FontSize="10"
-                    ToolTip="Zamknij panel" />
+                    Width="28"
+                    Height="28"
+                    FontSize="11"
+                    ToolTip="Zamknij panel"/>
         </Grid>
 
-        <StackPanel Grid.Row="1">
+        <!-- ═══ TabControl (indeks synchronizowany z MainTabs z code-behind) ═══ -->
+        <TabControl x:Name="SettingsTabs"
+                    Grid.Row="1"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="0"
+                    SelectedIndex="1">
+            <TabControl.ItemContainerStyle>
+                <Style TargetType="TabItem">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </Style>
+            </TabControl.ItemContainerStyle>
 
-            <TextBlock Text="ViewAttributeName"
-                       Foreground="{DynamicResource TextSecondaryBrush}"
-                       FontSize="11"
-                       Margin="0,0,0,4" />
+            <!-- ─── 0: Krawędzie — brak ustawień ─── -->
+            <TabItem Header="Krawędzie">
+                <Border Background="{DynamicResource CardBgBrush}"
+                        BorderBrush="{DynamicResource BorderColorBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="12,20">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="&#xE783;"
+                                   FontFamily="Segoe MDL2 Assets"
+                                   FontSize="20"
+                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,8"/>
+                        <TextBlock Text="Brak ustawień dla tego modułu."
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   FontSize="11"
+                                   HorizontalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+            </TabItem>
 
-            <ComboBox x:Name="ViewAttributeNameComboBox"
-                      Style="{DynamicResource SettingsComboBoxStyle}"
-                      Height="32"
-                      Margin="0,0,0,10"
-                      FontSize="12"
-                      IsEditable="False"
-                      IsTextSearchEnabled="True" />
+            <!-- ─── 1: Przekroje ─── -->
+            <TabItem Header="Przekroje">
+                <Border Background="{DynamicResource CardBgBrush}"
+                        BorderBrush="{DynamicResource BorderColorBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  Padding="12">
+                        <StackPanel>
 
-            <TextBlock Text="MarkAttributeName"
-                       Foreground="{DynamicResource TextSecondaryBrush}"
-                       FontSize="11"
-                       Margin="0,0,0,4" />
+                            <!-- Section: Atrybuty -->
+                            <TextBlock Text="ATRYBUTY"
+                                       Foreground="{DynamicResource TextTertiaryBrush}"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,10"/>
 
-            <ComboBox x:Name="MarkAttributeNameComboBox"
-                      Style="{DynamicResource SettingsComboBoxStyle}"
-                      Height="32"
-                      Margin="0,0,0,10"
-                      FontSize="12"
-                      IsEditable="False"
-                      IsTextSearchEnabled="True" />
+                            <TextBlock Text="ViewAttributeName"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       FontSize="11"
+                                       Margin="0,0,0,4"/>
+                            <ComboBox x:Name="ViewAttributeNameComboBox"
+                                      Style="{DynamicResource SettingsComboBoxStyle}"
+                                      Height="32"
+                                      Margin="0,0,0,10"
+                                      FontSize="12"
+                                      IsEditable="False"
+                                      IsTextSearchEnabled="True"/>
 
-            <TextBlock Text="DimensionAttributeName"
-                       Foreground="{DynamicResource TextSecondaryBrush}"
-                       FontSize="11"
-                       Margin="0,0,0,4" />
+                            <TextBlock Text="MarkAttributeName"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       FontSize="11"
+                                       Margin="0,0,0,4"/>
+                            <ComboBox x:Name="MarkAttributeNameComboBox"
+                                      Style="{DynamicResource SettingsComboBoxStyle}"
+                                      Height="32"
+                                      Margin="0,0,0,0"
+                                      FontSize="12"
+                                      IsEditable="False"
+                                      IsTextSearchEnabled="True"/>
 
-            <ComboBox x:Name="DimensionAttributeNameComboBox"
-                      Style="{DynamicResource SettingsComboBoxStyle}"
-                      Height="32"
-                      Margin="0,0,0,12"
-                      FontSize="12"
-                      IsEditable="False"
-                      IsTextSearchEnabled="True" />
+                            <Border Height="1"
+                                    Background="{DynamicResource DividerColorBrush}"
+                                    Margin="0,14,0,14"/>
 
-            <Button x:Name="RefreshSectionSettingsButton"
-                    Style="{DynamicResource SecondaryButton}"
-                    HorizontalAlignment="Stretch"
-                    Height="32"
-                    Margin="0,0,0,8">
+                            <!-- Section: Parametry -->
+                            <TextBlock Text="PARAMETRY"
+                                       Foreground="{DynamicResource TextTertiaryBrush}"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,10"/>
 
-                <Button.Triggers>
-                    <EventTrigger RoutedEvent="Button.Click">
-                        <BeginStoryboard>
-                            <Storyboard>
+                            <TextBlock Text="DepthUp"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       FontSize="11"
+                                       Margin="0,0,0,4"/>
+                            <TextBox x:Name="DepthUpTextBox"
+                                     Style="{StaticResource SettingsTextBoxStyle}"
+                                     Height="32"
+                                     Margin="0,0,0,10"/>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference RefreshText}"
-                                                 Storyboard.TargetProperty="Opacity"
-                                                 From="1"
-                                                 To="0"
-                                                 Duration="0:0:0.10" />
+                            <TextBlock Text="DepthDown"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       FontSize="11"
+                                       Margin="0,0,0,4"/>
+                            <TextBox x:Name="DepthDownTextBox"
+                                     Style="{StaticResource SettingsTextBoxStyle}"
+                                     Height="32"
+                                     Margin="0,0,0,10"/>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference RefreshIcon}"
-                                                 Storyboard.TargetProperty="Opacity"
-                                                 From="0"
-                                                 To="1"
-                                                 Duration="0:0:0.10"
-                                                 BeginTime="0:0:0.10" />
+                            <TextBlock Text="SectionLineLengthMillimeters"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       FontSize="11"
+                                       Margin="0,0,0,4"/>
+                            <TextBox x:Name="SectionLineLengthMillimetersTextBox"
+                                     Style="{StaticResource SettingsTextBoxStyle}"
+                                     Height="32"
+                                     Margin="0,0,0,0"/>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference RefreshRotate}"
-                                                 Storyboard.TargetProperty="Angle"
-                                                 From="0"
-                                                 To="360"
-                                                 Duration="0:0:0.60"
-                                                 BeginTime="0:0:0.10">
-                                    <DoubleAnimation.EasingFunction>
-                                        <CubicEase EasingMode="EaseInOut" />
-                                    </DoubleAnimation.EasingFunction>
-                                </DoubleAnimation>
+                            <Border Height="1"
+                                    Background="{DynamicResource DividerColorBrush}"
+                                    Margin="0,14,0,14"/>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference RefreshIcon}"
-                                                 Storyboard.TargetProperty="Opacity"
-                                                 From="1"
-                                                 To="0"
-                                                 Duration="0:0:0.10"
-                                                 BeginTime="0:0:0.70" />
+                            <!-- Actions -->
+                            <Button x:Name="ApplySectionSettingsButton"
+                                    Style="{DynamicResource PrimaryButton}"
+                                    Content="Zapisz ustawienia"
+                                    HorizontalAlignment="Stretch"
+                                    Height="32"
+                                    Margin="0,0,0,8"/>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference RefreshText}"
-                                                 Storyboard.TargetProperty="Opacity"
-                                                 From="0"
-                                                 To="1"
-                                                 Duration="0:0:0.10"
-                                                 BeginTime="0:0:0.80" />
+                            <Button x:Name="ResetSectionSettingsButton"
+                                    Style="{DynamicResource SecondaryButton}"
+                                    Content="Resetuj do domyślnych"
+                                    HorizontalAlignment="Stretch"
+                                    Height="32"
+                                    Margin="0,0,0,8"/>
 
-                            </Storyboard>
-                        </BeginStoryboard>
-                    </EventTrigger>
-                </Button.Triggers>
+                            <Button x:Name="RefreshSectionSettingsButton"
+                                    Style="{DynamicResource SecondaryButton}"
+                                    Content="Odśwież listę"
+                                    HorizontalAlignment="Stretch"
+                                    Height="32"/>
 
-                <Grid>
-                    <TextBlock x:Name="RefreshText"
-                               Text="Odśwież listę"
-                               VerticalAlignment="Center"
-                               HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </TabItem>
 
-                    <TextBlock x:Name="RefreshIcon"
-                               Text="&#xE72C;"
-                               FontFamily="Segoe MDL2 Assets"
-                               FontSize="15"
-                               Opacity="0"
-                               VerticalAlignment="Center"
-                               HorizontalAlignment="Center"
-                               RenderTransformOrigin="0.5,0.5">
-                        <TextBlock.RenderTransform>
-                            <RotateTransform x:Name="RefreshRotate"
-                                             Angle="0" />
-                        </TextBlock.RenderTransform>
-                    </TextBlock>
-                </Grid>
+            <!-- ─── 2: Wymiarowanie ─── -->
+            <TabItem Header="Wymiarowanie">
+                <Border Background="{DynamicResource CardBgBrush}"
+                        BorderBrush="{DynamicResource BorderColorBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  Padding="12">
+                        <StackPanel>
 
-            </Button>
+                            <TextBlock Text="ATRYBUTY"
+                                       Foreground="{DynamicResource TextTertiaryBrush}"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,10"/>
 
-            <Button x:Name="ApplySectionSettingsButton"
-                    Style="{DynamicResource PrimaryButton}"
-                    HorizontalAlignment="Stretch"
-                    Height="32">
+                            <TextBlock Text="DimensionAttributeName"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       FontSize="11"
+                                       Margin="0,0,0,4"/>
+                            <ComboBox x:Name="DimensionAttributeNameComboBox"
+                                      Style="{DynamicResource SettingsComboBoxStyle}"
+                                      Height="32"
+                                      Margin="0,0,0,0"
+                                      FontSize="12"
+                                      IsEditable="False"
+                                      IsTextSearchEnabled="True"/>
 
-                <Button.Triggers>
-                    <EventTrigger RoutedEvent="Button.Click">
-                        <BeginStoryboard>
-                            <Storyboard>
+                            <Border Height="1"
+                                    Background="{DynamicResource DividerColorBrush}"
+                                    Margin="0,14,0,14"/>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference ApplyText}"
-                                                 Storyboard.TargetProperty="Opacity"
-                                                 From="1"
-                                                 To="0"
-                                                 Duration="0:0:0.12" />
+                            <Button x:Name="ApplyDimensionSettingsButton"
+                                    Style="{DynamicResource PrimaryButton}"
+                                    Content="Zapisz ustawienia"
+                                    HorizontalAlignment="Stretch"
+                                    Height="32"
+                                    Margin="0,0,0,8"/>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference ApplyCheck}"
-                                                 Storyboard.TargetProperty="Opacity"
-                                                 From="0"
-                                                 To="1"
-                                                 Duration="0:0:0.15"
-                                                 BeginTime="0:0:0.12" />
+                            <Button x:Name="ResetDimensionSettingsButton"
+                                    Style="{DynamicResource SecondaryButton}"
+                                    Content="Resetuj do domyślnych"
+                                    HorizontalAlignment="Stretch"
+                                    Height="32"
+                                    Margin="0,0,0,8"/>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference ApplyCheckScale}"
-                                                 Storyboard.TargetProperty="ScaleX"
-                                                 From="0.5"
-                                                 To="1"
-                                                 Duration="0:0:0.2"
-                                                 BeginTime="0:0:0.12" />
+                            <Button x:Name="RefreshDimensionSettingsButton"
+                                    Style="{DynamicResource SecondaryButton}"
+                                    Content="Odśwież listę"
+                                    HorizontalAlignment="Stretch"
+                                    Height="32"/>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference ApplyCheckScale}"
-                                                 Storyboard.TargetProperty="ScaleY"
-                                                 From="0.5"
-                                                 To="1"
-                                                 Duration="0:0:0.2"
-                                                 BeginTime="0:0:0.12" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </TabItem>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference ApplyCheck}"
-                                                 Storyboard.TargetProperty="Opacity"
-                                                 From="1"
-                                                 To="0"
-                                                 Duration="0:0:0.15"
-                                                 BeginTime="0:0:1.1" />
+            <!-- ─── 3: Widok — brak ustawień ─── -->
+            <TabItem Header="Widok">
+                <Border Background="{DynamicResource CardBgBrush}"
+                        BorderBrush="{DynamicResource BorderColorBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="12,20">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="&#xE783;"
+                                   FontFamily="Segoe MDL2 Assets"
+                                   FontSize="20"
+                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,8"/>
+                        <TextBlock Text="Brak ustawień dla tego modułu."
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   FontSize="11"
+                                   HorizontalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+            </TabItem>
 
-                                <DoubleAnimation Storyboard.Target="{x:Reference ApplyText}"
-                                                 Storyboard.TargetProperty="Opacity"
-                                                 From="0"
-                                                 To="1"
-                                                 Duration="0:0:0.15"
-                                                 BeginTime="0:0:1.25" />
+            <!-- ─── 4: Marki — brak ustawień ─── -->
+            <TabItem Header="Marki">
+                <Border Background="{DynamicResource CardBgBrush}"
+                        BorderBrush="{DynamicResource BorderColorBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="12,20">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="&#xE783;"
+                                   FontFamily="Segoe MDL2 Assets"
+                                   FontSize="20"
+                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,8"/>
+                        <TextBlock Text="Brak ustawień dla tego modułu."
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   FontSize="11"
+                                   HorizontalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+            </TabItem>
 
-                            </Storyboard>
-                        </BeginStoryboard>
-                    </EventTrigger>
-                </Button.Triggers>
-
-                <Grid>
-                    <TextBlock x:Name="ApplyText"
-                               Text="Zastosuj"
-                               VerticalAlignment="Center"
-                               HorizontalAlignment="Center" />
-
-                    <TextBlock x:Name="ApplyCheck"
-                               Text="&#xE73E;"
-                               FontFamily="Segoe MDL2 Assets"
-                               FontSize="15"
-                               Foreground="#4CAF50"
-                               Opacity="0"
-                               VerticalAlignment="Center"
-                               HorizontalAlignment="Center"
-                               RenderTransformOrigin="0.5,0.5">
-                        <TextBlock.RenderTransform>
-                            <ScaleTransform x:Name="ApplyCheckScale"
-                                            ScaleX="1"
-                                            ScaleY="1" />
-                        </TextBlock.RenderTransform>
-                    </TextBlock>
-                </Grid>
-
-            </Button>
-
-        </StackPanel>
-
+        </TabControl>
     </Grid>
 </ResourceDictionary>

@@ -135,7 +135,7 @@ namespace HFT_DrawingHelper {
                 var normalX = -dy / length;
                 var normalY = dx / length;
 
-                const double halfLength = SectionLineLengthMillimeters * 0.5;
+                var halfLength = _sectionLineLengthMillimeters * 0.5;
 
                 var startPoint = new TSG.Point(
                     middlePoint.X - normalX * halfLength,
@@ -158,8 +158,8 @@ namespace HFT_DrawingHelper {
                     startPoint,
                     endPoint,
                     insertionPoint,
-                    DepthUp,
-                    DepthDown,
+                    _depthUp,
+                    _depthDown,
                     viewAttributes,
                     markAttributes,
                     out var sectionView,
@@ -271,10 +271,48 @@ namespace HFT_DrawingHelper {
         private const string DefaultMarkAttributeName = "standard";
         private static string _viewAttributeName = DefaultViewAttributeName;
         private static string _markAttributeName = DefaultMarkAttributeName;
-        private const double DepthUp = 1.0;
-        private const double DepthDown = 1.0;
-        private const double SectionLineLengthMillimeters = 300.0;
+        private const double DefaultDepthUp = 1.0;
+        private const double DefaultDepthDown = 1.0;
+        private const double DefaultSectionLineLengthMillimeters = 300.0;
         private const double Gap = 10.0;
+        private static double _depthUp = DefaultDepthUp;
+        private static double _depthDown = DefaultDepthDown;
+        private static double _sectionLineLengthMillimeters = DefaultSectionLineLengthMillimeters;
+
+        private static void UpdateSectionGeometrySettings(double depthUp, double depthDown,
+            double sectionLineLengthMillimeters) {
+            _depthUp = depthUp;
+            _depthDown = depthDown;
+            _sectionLineLengthMillimeters = sectionLineLengthMillimeters;
+        }
+
+        private static void ResetSectionGeometrySettingsToDefault() {
+            UpdateSectionGeometrySettings(DefaultDepthUp, DefaultDepthDown, DefaultSectionLineLengthMillimeters);
+        }
+
+        private static double GetSectionDepthUp() {
+            return _depthUp;
+        }
+
+        private static double GetSectionDepthDown() {
+            return _depthDown;
+        }
+
+        private static double GetSectionLineLengthMillimeters() {
+            return _sectionLineLengthMillimeters;
+        }
+
+        private static double GetDefaultSectionDepthUp() {
+            return DefaultDepthUp;
+        }
+
+        private static double GetDefaultSectionDepthDown() {
+            return DefaultDepthDown;
+        }
+
+        private static double GetDefaultSectionLineLengthMillimeters() {
+            return DefaultSectionLineLengthMillimeters;
+        }
 
         #endregion
     }

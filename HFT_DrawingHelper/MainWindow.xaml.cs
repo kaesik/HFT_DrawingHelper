@@ -49,9 +49,14 @@ namespace HFT_DrawingHelper {
         private bool _isResettingMainTabsStartupState;
         private bool _mainTabSelectionWasRequestedByUser;
         private ComboBox _markAttributeNameComboBox;
+        private TextBlock _marksStatusTextBlock;
         private ListBox _partItemsList;
 
         private bool _sectionAttributeOptionsLoaded;
+        private TextBlock _settingsPanelHeaderText;
+
+        // Settings side panel sync
+        private TabControl _settingsTabs;
         private CheckBox _shortExtensionLineCheckBox;
 
         private SidePanelMode _sidePanelMode = SidePanelMode.None;
@@ -88,6 +93,7 @@ namespace HFT_DrawingHelper {
 
             _viewAttributeNameComboBox = FindNamedDescendant<ComboBox>("ViewAttributeNameComboBox");
             _markAttributeNameComboBox = FindNamedDescendant<ComboBox>("MarkAttributeNameComboBox");
+            _marksStatusTextBlock = FindNamedDescendant<TextBlock>("MarksStatusTextBlock");
             _dimensionAttributeNameComboBox = FindNamedDescendant<ComboBox>("DimensionAttributeNameComboBox");
             _partItemsList = FindNamedDescendant<ListBox>("PartItemsList");
             _edgeGroupsList = FindNamedDescendant<ListBox>("EdgeGroupsList");
@@ -110,12 +116,20 @@ namespace HFT_DrawingHelper {
             _dimensionLeftCheckBox = FindNamedDescendant<CheckBox>("DimensionLeftCheckBox");
             _verticalTotalDimensionCheckBox = FindNamedDescendant<CheckBox>("VerticalTotalDimensionCheckBox");
             _shortExtensionLineCheckBox = FindNamedDescendant<CheckBox>("ShortExtensionLineCheckBox");
+
+            // Settings panel sync
+            _settingsTabs = FindNamedDescendant<TabControl>("SettingsTabs");
+            _settingsPanelHeaderText = FindNamedDescendant<TextBlock>("SettingsPanelHeaderText");
         }
 
         private void WireSplitXamlEvents() {
             AddClickHandler("CloseSettingsPanelButton", CloseSettingsPanelButton_Click);
             AddClickHandler("RefreshSectionSettingsButton", RefreshSectionSettingsButton_Click);
             AddClickHandler("ApplySectionSettingsButton", ApplySectionSettingsButton_Click);
+            AddClickHandler("ResetSectionSettingsButton", ResetSectionSettingsButton_Click);
+            AddClickHandler("ApplyDimensionSettingsButton", ApplyDimensionSettingsButton_Click);
+            AddClickHandler("ResetDimensionSettingsButton", ResetDimensionSettingsButton_Click);
+            AddClickHandler("RefreshDimensionSettingsButton", RefreshSectionSettingsButton_Click);
             AddClickHandler("DrawEdgesButton", DrawEdgesButton_Click);
             AddClickHandler("GetEdgesButton", GetEdgesButton_Click);
             AddClickHandler("AddSectionsButton", AddSectionsButton_Click);
@@ -128,6 +142,12 @@ namespace HFT_DrawingHelper {
             AddClickHandler("DeselectAllPartsButton", DeselectAllPartsButton_Click);
             AddClickHandler("SelectAllEdgesButton", SelectAllEdgesButton_Click);
             AddClickHandler("DeselectAllEdgesButton", DeselectAllEdgesButton_Click);
+            AddClickHandler("SetWeldMarkSuffixOButton", SetWeldMarkSuffixOButton_Click);
+            AddClickHandler("SetWeldMarkSuffixUButton", SetWeldMarkSuffixUButton_Click);
+            AddClickHandler("ClearWeldMarkSuffixButton", ClearWeldMarkSuffixButton_Click);
+            AddClickHandler("RestoreWeldMarkSuffixButton", RestoreWeldMarkSuffixButton_Click);
+            AddClickHandler("HideSelectedDrawingObjectsButton", HideSelectedDrawingObjectsButton_Click);
+            AddClickHandler("ShowSelectedDrawingObjectsButton", ShowSelectedDrawingObjectsButton_Click);
 
             if (_partItemsList != null) {
                 _partItemsList.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(PartItemsList_Click), true);
@@ -193,6 +213,7 @@ namespace HFT_DrawingHelper {
             }
 
             SetStartScreenVisibility(MainTabs.SelectedIndex < 0);
+            SyncSettingsPanel(MainTabs.SelectedIndex);
         }
 
         private void ResetMainTabsToStartScreen() {
@@ -507,10 +528,62 @@ namespace HFT_DrawingHelper {
 
             if (!isVisible) return;
 
+            // Sync to the currently active main tab when opening
+            SyncSettingsPanel(MainTabs.SelectedIndex);
+
             if (!_sectionAttributeOptionsLoaded)
                 ReloadSectionAttributeOptions();
             else
                 LoadSectionSettingsIntoPanel();
+        }
+
+        /// <summary>
+        ///     Synchronizes the settings side panel to the selected main tab:
+        ///     switches the hidden SettingsTabs to the same index and updates the header label.
+        /// </summary>
+        private void SyncSettingsPanel(int tabIndex) {
+            // Map main tab index → settings tab index (same order)
+            if (_settingsTabs != null)
+                _settingsTabs.SelectedIndex = tabIndex;
+
+            // Update header text
+            if (_settingsPanelHeaderText != null) {
+                var tabNames = new[] { "KRAWĘDZIE", "PRZEKROJE", "WYMIAROWANIE", "WIDOK", "MARKI" };
+                _settingsPanelHeaderText.Text = tabIndex >= 0 && tabIndex < tabNames.Length
+                    ? "USTAWIENIA — " + tabNames[tabIndex]
+                    : "USTAWIENIA";
+            }
+
+            // Refresh combo selections whenever the panel is visible and has settings
+            if (SettingsPanelBorder?.Visibility == Visibility.Visible)
+                LoadSectionSettingsIntoPanel();
+        }
+
+        private void ResetSectionSettingsButton_Click(object sender, RoutedEventArgs e) {
+            // Reset to default attribute names, persist, and reload UI
+            UpdateSectionAttributeNames(DefaultViewAttributeName, DefaultMarkAttributeName);
+            SaveCurrentSectionSettings();
+            LoadSectionSettingsIntoPanel();
+        }
+
+        private void ApplyDimensionSettingsButton_Click(object sender, RoutedEventArgs e) {
+            var dimensionAttributeName = _dimensionAttributeNameComboBox?.SelectedItem as string
+                                         ?? _dimensionAttributeNameComboBox?.Text?.Trim();
+
+            if (string.IsNullOrWhiteSpace(dimensionAttributeName)) {
+                MessageBox.Show("Wybierz DimensionAttributeName z listy.");
+                return;
+            }
+
+            UpdateDimensionAttributeName(dimensionAttributeName);
+            SaveCurrentSectionSettings();
+            LoadSectionSettingsIntoPanel();
+        }
+
+        private void ResetDimensionSettingsButton_Click(object sender, RoutedEventArgs e) {
+            UpdateDimensionAttributeName(DefaultDimensionAttributeName);
+            SaveCurrentSectionSettings();
+            LoadSectionSettingsIntoPanel();
         }
 
         private void SetSettingsPanelVisibility(bool isVisible) {

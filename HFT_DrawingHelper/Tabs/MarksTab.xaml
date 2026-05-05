@@ -1,0 +1,108 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="../Resources/MainWindowStyles.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+
+    <StackPanel x:Key="MarksTabContent" x:Shared="False" Margin="0,12,0,0">
+
+        <TextBlock Text="Zaznacz part mark spoiny na rysunku i kliknij odpowiedni przycisk."
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,10"/>
+
+        <!-- ─── Sufiks spoiny ─── -->
+        <TextBlock Text="SUFIKS SPOINY"
+                   Foreground="{DynamicResource TextTertiaryBrush}"
+                   FontSize="10"
+                   FontWeight="SemiBold"
+                   Margin="0,0,0,8"/>
+
+        <UniformGrid Columns="2" Rows="2">
+            <Button x:Name="SetWeldMarkSuffixOButton"
+                    Style="{DynamicResource PrimaryButton}"
+                    Content="Zamień na -o"
+                    Height="32"
+                    Margin="0,0,4,4"/>
+
+            <Button x:Name="SetWeldMarkSuffixUButton"
+                    Style="{DynamicResource PrimaryButton}"
+                    Content="Zamień na -u"
+                    Height="32"
+                    Margin="4,0,0,4"/>
+
+            <Button x:Name="ClearWeldMarkSuffixButton"
+                    Style="{DynamicResource SecondaryButton}"
+                    Content="Usuń -#"
+                    Height="32"
+                    Margin="0,0,4,0"/>
+
+            <Button x:Name="RestoreWeldMarkSuffixButton"
+                    Style="{DynamicResource SecondaryButton}"
+                    Content="Dodaj -#"
+                    Height="32"
+                    Margin="4,0,0,0"/>
+        </UniformGrid>
+
+        <Border Height="1"
+                Background="{DynamicResource DividerColorBrush}"
+                Margin="0,10,0,10"/>
+
+        <!-- ─── Widoczność ─── -->
+        <TextBlock Text="WIDOCZNOŚĆ"
+                   Foreground="{DynamicResource TextTertiaryBrush}"
+                   FontSize="10"
+                   FontWeight="SemiBold"
+                   Margin="0,0,0,8"/>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Button x:Name="HideSelectedDrawingObjectsButton"
+                    Grid.Column="0"
+                    Style="{DynamicResource SecondaryButton}"
+                    HorizontalAlignment="Stretch"
+                    Height="32">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xED1A;"
+                               FontFamily="Segoe MDL2 Assets"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               Margin="0,0,5,0"/>
+                    <TextBlock Text="Ukryj"
+                               FontSize="11"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
+
+            <Button x:Name="ShowSelectedDrawingObjectsButton"
+                    Grid.Column="2"
+                    Style="{DynamicResource SecondaryButton}"
+                    HorizontalAlignment="Stretch"
+                    Height="32">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE7B3;"
+                               FontFamily="Segoe MDL2 Assets"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               Margin="0,0,5,0"/>
+                    <TextBlock Text="Pokaż"
+                               FontSize="11"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <TextBlock x:Name="MarksStatusTextBlock"
+                   Text="Gotowe."
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   FontSize="11"
+                   Margin="0,10,0,0"/>
+
+    </StackPanel>
+</ResourceDictionary>

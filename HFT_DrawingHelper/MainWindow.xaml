@@ -25,6 +25,7 @@
                 <ResourceDictionary Source="Tabs/SectionsTab.xaml" />
                 <ResourceDictionary Source="Tabs/DimensionsTab.xaml" />
                 <ResourceDictionary Source="Tabs/ViewTab.xaml" />
+                <ResourceDictionary Source="Tabs/MarksTab.xaml" />
                 <ResourceDictionary Source="SidePanels/SettingsSidePanel.xaml" />
                 <ResourceDictionary Source="SidePanels/PartsSidePanel.xaml" />
                 <ResourceDictionary Source="SidePanels/EdgesSidePanel.xaml" />
@@ -262,7 +263,7 @@
                         <Button x:Name="SettingsToggleButton"
                                 Style="{StaticResource IconButton}"
                                 Content="&#xE713;"
-                                ToolTip="Ustawienia przekrojów"
+                                ToolTip="Ustawienia"
                                 Click="SettingsToggleButton_Click" />
                         <Button x:Name="ThemeToggleButton"
                                 Style="{StaticResource IconButton}"
@@ -312,6 +313,10 @@
                     <TabItem Header="Widok"
                              Style="{StaticResource HftTabItem}">
                         <ContentControl Content="{StaticResource ViewTabContent}" />
+                    </TabItem>
+                    <TabItem Header="Marki"
+                             Style="{StaticResource HftTabItem}">
+                        <ContentControl Content="{StaticResource MarksTabContent}" />
                     </TabItem>
                 </TabControl>
 

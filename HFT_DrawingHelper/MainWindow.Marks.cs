@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Windows;
-using System.Windows.Controls;
+using System.Windows.Media;
 using TSD = Tekla.Structures.Drawing;
 
 namespace HFT_DrawingHelper {
@@ -61,15 +61,15 @@ namespace HFT_DrawingHelper {
                 if (mark == null)
                     continue;
 
-                var textElement = FindSuffixTextElement(mark, out var currentValue);
-                if (textElement == null) {
+                var suffixTarget = FindSuffixTarget(mark);
+                if (suffixTarget == null) {
                     if (!string.Equals(newValue, "-#", StringComparison.OrdinalIgnoreCase)) {
                         skipped++;
                         continue;
                     }
 
                     try {
-                        if (!TryAppendSuffixTextElement(mark, newValue)) {
+                        if (!TryAddSuffixToMark(mark, newValue)) {
                             skipped++;
                             continue;
                         }
@@ -84,21 +84,13 @@ namespace HFT_DrawingHelper {
                     continue;
                 }
 
-                if (currentValue == null)
-                    currentValue = string.Empty;
-
-                if (!KnownWeldMarkSuffixes.Contains(currentValue)) {
-                    skipped++;
-                    continue;
-                }
-
-                if (string.Equals(currentValue, newValue, StringComparison.OrdinalIgnoreCase)) {
+                if (string.Equals(suffixTarget.CurrentSuffix, newValue, StringComparison.OrdinalIgnoreCase)) {
                     skipped++;
                     continue;
                 }
 
                 try {
-                    SetTextElementValue(textElement, newValue);
+                    suffixTarget.SetSuffix(newValue);
                     mark.Modify();
                     changed++;
                 }
@@ -160,8 +152,7 @@ namespace HFT_DrawingHelper {
         }
 
         private static void ApplyDrawingObjectVisibility(TSD.DrawingObject drawingObject, bool show) {
-            var hideable = drawingObject.GetType().GetProperty("Hideable", BindingFlags.Instance | BindingFlags.Public)
-                ?.GetValue(drawingObject, null);
+            var hideable = drawingObject.GetType().GetProperty("Hideable", BindingFlags.Instance | BindingFlags.Public)?.GetValue(drawingObject, null);
             if (hideable == null)
                 throw new InvalidOperationException();
 
@@ -182,114 +173,47 @@ namespace HFT_DrawingHelper {
             return null;
         }
 
-        private static object FindSuffixTextElement(TSD.MarkBase mark, out string value) {
-            value = null;
-            var textElements = new List<object>();
+        private static SuffixTarget FindSuffixTarget(TSD.MarkBase mark) {
+            var textElements = new List<TSD.TextElement>();
             CollectTextElements(GetMarkContent(mark), textElements);
 
-            if (textElements.Count == 0)
-                return null;
-
             for (var i = textElements.Count - 1; i >= 0; i--) {
-                var currentTextElement = textElements[i];
-                var currentValue = GetTextElementValue(currentTextElement);
-                if (currentValue == null)
-                    currentValue = string.Empty;
+                var textElement = textElements[i];
+                var value = textElement.Value;
+                if (value == null)
+                    value = string.Empty;
 
-                if (!KnownWeldMarkSuffixes.Contains(currentValue))
-                    continue;
+                if (KnownWeldMarkSuffixes.Contains(value))
+                    return new SuffixTarget(textElement, value, value.Length, true);
 
-                value = currentValue;
-                return currentTextElement;
+                foreach (var suffix in KnownWeldMarkSuffixes) {
+                    if (string.IsNullOrEmpty(suffix))
+                        continue;
+
+                    if (!value.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    return new SuffixTarget(textElement, suffix, suffix.Length, false);
+                }
             }
 
             return null;
         }
 
-        private static bool TryAppendSuffixTextElement(TSD.MarkBase mark, string value) {
-            var content = GetMarkContent(mark);
-            if (content == null)
-                return false;
+        private static bool TryAddSuffixToMark(TSD.MarkBase mark, string value) {
+            var textElements = new List<TSD.TextElement>();
+            CollectTextElements(GetMarkContent(mark), textElements);
 
-            var textElements = new List<object>();
-            CollectTextElements(content, textElements);
-            var referenceTextElement = textElements.Count > 0 ? textElements[textElements.Count - 1] : null;
-            var textElement = CreateTextElement(value, referenceTextElement);
-            if (textElement == null)
-                return false;
-
-            return TryAddElementToContainer(content, textElement);
-        }
-
-        private static object CreateTextElement(string value, object referenceTextElement) {
-            var drawingAssembly = typeof(TSD.MarkBase).Assembly;
-            var textElementType = drawingAssembly.GetType("Tekla.Structures.Drawing.TextElement");
-            if (textElementType == null)
-                return null;
-
-            object textElement = null;
-
-            try {
-                textElement = Activator.CreateInstance(textElementType, value);
-            }
-            catch {
-                try {
-                    textElement = Activator.CreateInstance(textElementType);
-                }
-                catch {
-                    return null;
-                }
-            }
-
-            CopyTextElementStyle(referenceTextElement, textElement);
-            SetTextElementValue(textElement, value);
-            return textElement;
-        }
-
-        private static void CopyTextElementStyle(object source, object target) {
-            if (source == null || target == null)
-                return;
-
-            var sourceType = source.GetType();
-            var targetType = target.GetType();
-            foreach (var sourceProperty in sourceType.GetProperties(BindingFlags.Instance | BindingFlags.Public)) {
-                if (!sourceProperty.CanRead || sourceProperty.GetIndexParameters().Length > 0)
+            for (var i = textElements.Count - 1; i >= 0; i--) {
+                var textElement = textElements[i];
+                if (textElement == null)
                     continue;
 
-                if (string.Equals(sourceProperty.Name, "Value", StringComparison.OrdinalIgnoreCase))
-                    continue;
+                var currentValue = textElement.Value;
+                if (currentValue == null)
+                    currentValue = string.Empty;
 
-                var targetProperty = targetType.GetProperty(sourceProperty.Name, BindingFlags.Instance | BindingFlags.Public);
-                if (targetProperty == null || !targetProperty.CanWrite || targetProperty.GetIndexParameters().Length > 0)
-                    continue;
-
-                if (!targetProperty.PropertyType.IsAssignableFrom(sourceProperty.PropertyType))
-                    continue;
-
-                try {
-                    targetProperty.SetValue(target, sourceProperty.GetValue(source, null), null);
-                }
-                catch {
-                }
-            }
-        }
-
-        private static bool TryAddElementToContainer(object container, object element) {
-            var containerType = container.GetType();
-            var elementType = element.GetType();
-
-            foreach (var method in containerType.GetMethods(BindingFlags.Instance | BindingFlags.Public)) {
-                if (!string.Equals(method.Name, "Add", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var parameters = method.GetParameters();
-                if (parameters.Length != 1)
-                    continue;
-
-                if (!parameters[0].ParameterType.IsAssignableFrom(elementType))
-                    continue;
-
-                method.Invoke(container, new[] { element });
+                textElement.Value = currentValue + value;
                 return true;
             }
 
@@ -300,22 +224,22 @@ namespace HFT_DrawingHelper {
             if (mark == null || mark.Attributes == null)
                 return null;
 
-            return mark.Attributes.GetType().GetProperty("Content", BindingFlags.Instance | BindingFlags.Public)
-                ?.GetValue(mark.Attributes, null);
+            var attributesType = mark.Attributes.GetType();
+            var contentProperty = attributesType.GetProperty("Content", BindingFlags.Instance | BindingFlags.Public);
+            return contentProperty == null ? null : contentProperty.GetValue(mark.Attributes, null);
         }
 
-        private static void CollectTextElements(object container, ICollection<object> results) {
+        private static void CollectTextElements(object container, ICollection<TSD.TextElement> results) {
             if (container == null)
                 return;
 
             IEnumerator enumerator;
-
             try {
-                if (container is IEnumerable enumerable)
+                var enumerable = container as IEnumerable;
+                if (enumerable != null)
                     enumerator = enumerable.GetEnumerator();
                 else
-                    enumerator = container.GetType().GetMethod("GetEnumerator", Type.EmptyTypes)
-                        ?.Invoke(container, null) as IEnumerator;
+                    enumerator = container.GetType().GetMethod("GetEnumerator", Type.EmptyTypes)?.Invoke(container, null) as IEnumerator;
             }
             catch {
                 return;
@@ -329,47 +253,70 @@ namespace HFT_DrawingHelper {
                 if (element == null)
                     continue;
 
-                var typeName = element.GetType().Name;
-                if (string.Equals(typeName, "TextElement", StringComparison.OrdinalIgnoreCase))
-                    results.Add(element);
-                else if (string.Equals(typeName, "ContainerElement", StringComparison.OrdinalIgnoreCase))
-                    CollectTextElements(element, results);
+                var textElement = element as TSD.TextElement;
+                if (textElement != null)
+                    results.Add(textElement);
+
+                var nestedContainer = element as TSD.ContainerElement;
+                if (nestedContainer != null)
+                    CollectTextElements(nestedContainer, results);
             }
-        }
-
-        private static string GetTextElementValue(object textElement) {
-            return textElement?.GetType().GetProperty("Value", BindingFlags.Instance | BindingFlags.Public)
-                ?.GetValue(textElement, null) as string;
-        }
-
-        private static void SetTextElementValue(object textElement, string value) {
-            textElement.GetType().GetProperty("Value", BindingFlags.Instance | BindingFlags.Public)
-                ?.SetValue(textElement, value, null);
         }
 
         private static string BuildResultMessage(int changed, int skipped, int errors, string changedLabel) {
             var parts = new List<string>();
 
             if (changed > 0)
-                parts.Add($"{changedLabel}: {changed}");
+                parts.Add(changedLabel + ": " + changed);
 
             if (skipped > 0)
-                parts.Add($"Pominięto: {skipped}");
+                parts.Add("Pominięto: " + skipped);
 
             if (errors > 0)
-                parts.Add($"Błędy: {errors}");
+                parts.Add("Błędy: " + errors);
 
             return string.Join("  |  ", parts);
         }
 
         private void SetMarksStatus(string message) {
-            var marksStatusTextBlock = FindNamedDescendant<TextBlock>("MarksStatusTextBlock");
-            if (marksStatusTextBlock == null) {
+            if (_marksStatusTextBlock == null) {
                 MessageBox.Show(message);
                 return;
             }
 
-            marksStatusTextBlock.Text = message;
+            _marksStatusTextBlock.Text = message;
+            _marksStatusTextBlock.Foreground = TryFindResource("TextSecondaryBrush") as Brush ?? _marksStatusTextBlock.Foreground;
+        }
+
+        private sealed class SuffixTarget {
+            private readonly TSD.TextElement _textElement;
+            private readonly int _suffixLength;
+            private readonly bool _replaceWholeValue;
+
+            public SuffixTarget(TSD.TextElement textElement, string currentSuffix, int suffixLength, bool replaceWholeValue) {
+                _textElement = textElement;
+                CurrentSuffix = currentSuffix;
+                _suffixLength = suffixLength;
+                _replaceWholeValue = replaceWholeValue;
+            }
+
+            public string CurrentSuffix { get; private set; }
+
+            public void SetSuffix(string suffix) {
+                var value = _textElement.Value;
+                if (value == null)
+                    value = string.Empty;
+
+                if (_replaceWholeValue) {
+                    _textElement.Value = suffix;
+                    CurrentSuffix = suffix;
+                    return;
+                }
+
+                var baseValueLength = Math.Max(0, value.Length - _suffixLength);
+                _textElement.Value = value.Substring(0, baseValueLength) + suffix;
+                CurrentSuffix = suffix;
+            }
         }
     }
 }

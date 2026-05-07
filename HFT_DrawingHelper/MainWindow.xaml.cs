@@ -54,6 +54,10 @@ namespace HFT_DrawingHelper {
 
         private bool _sectionAttributeOptionsLoaded;
         private TextBlock _settingsPanelHeaderText;
+        private TextBox _depthUpTextBox;
+        private TextBox _depthDownTextBox;
+        private TextBox _sectionLineLengthMillimetersTextBox;
+        private TextBox _viewExpansionMarginMillimetersTextBox;
 
         // Settings side panel sync
         private TabControl _settingsTabs;
@@ -116,6 +120,10 @@ namespace HFT_DrawingHelper {
             _dimensionLeftCheckBox = FindNamedDescendant<CheckBox>("DimensionLeftCheckBox");
             _verticalTotalDimensionCheckBox = FindNamedDescendant<CheckBox>("VerticalTotalDimensionCheckBox");
             _shortExtensionLineCheckBox = FindNamedDescendant<CheckBox>("ShortExtensionLineCheckBox");
+            _depthUpTextBox = FindNamedDescendant<TextBox>("DepthUpTextBox");
+            _depthDownTextBox = FindNamedDescendant<TextBox>("DepthDownTextBox");
+            _sectionLineLengthMillimetersTextBox = FindNamedDescendant<TextBox>("SectionLineLengthMillimetersTextBox");
+            _viewExpansionMarginMillimetersTextBox = FindNamedDescendant<TextBox>("ViewExpansionMarginMillimetersTextBox");
 
             // Settings panel sync
             _settingsTabs = FindNamedDescendant<TabControl>("SettingsTabs");
@@ -486,8 +494,14 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
+            if (!TryReadPositiveDouble(_depthUpTextBox, "DepthUp", out var depthUp)) return;
+            if (!TryReadPositiveDouble(_depthDownTextBox, "DepthDown", out var depthDown)) return;
+            if (!TryReadPositiveDouble(_sectionLineLengthMillimetersTextBox, "SectionLineLengthMillimeters", out var sectionLineLengthMillimeters)) return;
+            if (!TryReadNonNegativeDouble(_viewExpansionMarginMillimetersTextBox, "ViewExpansionMarginMillimeters", out var viewExpansionMarginMillimeters)) return;
+
             UpdateSectionAttributeNames(viewAttributeName, markAttributeName);
             UpdateDimensionAttributeName(dimensionAttributeName);
+            UpdateSectionGeometrySettings(depthUp, depthDown, sectionLineLengthMillimeters, viewExpansionMarginMillimeters);
             SaveCurrentSectionSettings();
             LoadSectionSettingsIntoPanel();
         }
@@ -512,13 +526,28 @@ namespace HFT_DrawingHelper {
 
             if (!string.IsNullOrWhiteSpace(savedSettings.DimensionAttributeName))
                 UpdateDimensionAttributeName(savedSettings.DimensionAttributeName);
+
+            UpdateSectionGeometrySettings(
+                savedSettings.DepthUp > 0 ? savedSettings.DepthUp : GetSectionDepthUp(),
+                savedSettings.DepthDown > 0 ? savedSettings.DepthDown : GetSectionDepthDown(),
+                savedSettings.SectionLineLengthMillimeters > 0
+                    ? savedSettings.SectionLineLengthMillimeters
+                    : GetSectionLineLengthMillimeters(),
+                savedSettings.ViewExpansionMarginMillimeters >= 0
+                    ? savedSettings.ViewExpansionMarginMillimeters
+                    : GetViewExpansionMarginMillimeters()
+            );
         }
 
         private static void SaveCurrentSectionSettings() {
             DrawingAttributeSettingsService.Save(
                 _viewAttributeName,
                 _markAttributeName,
-                _dimensionAttributeName
+                _dimensionAttributeName,
+                GetSectionDepthUp(),
+                GetSectionDepthDown(),
+                GetSectionLineLengthMillimeters(),
+                GetViewExpansionMarginMillimeters()
             );
         }
 
@@ -560,8 +589,8 @@ namespace HFT_DrawingHelper {
         }
 
         private void ResetSectionSettingsButton_Click(object sender, RoutedEventArgs e) {
-            // Reset to default attribute names, persist, and reload UI
             UpdateSectionAttributeNames(DefaultViewAttributeName, DefaultMarkAttributeName);
+            ResetSectionGeometrySettingsToDefault();
             SaveCurrentSectionSettings();
             LoadSectionSettingsIntoPanel();
         }
@@ -625,6 +654,11 @@ namespace HFT_DrawingHelper {
             _dimensionAttributeNameComboBox.SelectedItem = _availableDimensionAttributeNames
                 .FirstOrDefault(
                     item => string.Equals(item, _dimensionAttributeName, StringComparison.OrdinalIgnoreCase));
+
+            SetTextBoxValue(_depthUpTextBox, GetSectionDepthUp());
+            SetTextBoxValue(_depthDownTextBox, GetSectionDepthDown());
+            SetTextBoxValue(_sectionLineLengthMillimetersTextBox, GetSectionLineLengthMillimeters());
+            SetTextBoxValue(_viewExpansionMarginMillimetersTextBox, GetViewExpansionMarginMillimeters());
         }
 
         private void LoadSectionSettingsFallbackOnly() {
@@ -644,6 +678,55 @@ namespace HFT_DrawingHelper {
             );
 
             LoadSectionSettingsIntoPanel();
+        }
+
+
+        private static void SetTextBoxValue(TextBox textBox, double value) {
+            if (textBox == null) return;
+            textBox.Text = value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static bool TryReadPositiveDouble(TextBox textBox, string fieldName, out double value) {
+            if (!TryReadDouble(textBox, fieldName, out value))
+                return false;
+
+            if (value > 0)
+                return true;
+
+            MessageBox.Show(fieldName + " musi być większe od 0.");
+            return false;
+        }
+
+        private static bool TryReadNonNegativeDouble(TextBox textBox, string fieldName, out double value) {
+            if (!TryReadDouble(textBox, fieldName, out value))
+                return false;
+
+            if (value >= 0)
+                return true;
+
+            MessageBox.Show(fieldName + " nie może być mniejsze od 0.");
+            return false;
+        }
+
+        private static bool TryReadDouble(TextBox textBox, string fieldName, out double value) {
+            value = 0;
+
+            var text = textBox?.Text?.Trim();
+            if (string.IsNullOrWhiteSpace(text)) {
+                MessageBox.Show(fieldName + " nie może być puste.");
+                return false;
+            }
+
+            text = text.Replace(',', '.');
+            if (double.TryParse(
+                    text,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out value))
+                return true;
+
+            MessageBox.Show(fieldName + " musi być liczbą.");
+            return false;
         }
 
         private static void ApplyAttributeCollectionSnapshot(
@@ -957,6 +1040,10 @@ namespace HFT_DrawingHelper {
             public string ViewAttributeName { get; set; }
             public string MarkAttributeName { get; set; }
             public string DimensionAttributeName { get; set; }
+            public double DepthUp { get; set; } = -1;
+            public double DepthDown { get; set; } = -1;
+            public double SectionLineLengthMillimeters { get; set; } = -1;
+            public double ViewExpansionMarginMillimeters { get; set; } = -1;
         }
 
         private static class DrawingAttributeSettingsService {
@@ -992,6 +1079,14 @@ namespace HFT_DrawingHelper {
                             savedSettings.MarkAttributeName = value;
                         else if (string.Equals(key, "DimensionAttributeName", StringComparison.OrdinalIgnoreCase))
                             savedSettings.DimensionAttributeName = value;
+                        else if (string.Equals(key, "DepthUp", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.DepthUp = ParseSavedDouble(value, savedSettings.DepthUp);
+                        else if (string.Equals(key, "DepthDown", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.DepthDown = ParseSavedDouble(value, savedSettings.DepthDown);
+                        else if (string.Equals(key, "SectionLineLengthMillimeters", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.SectionLineLengthMillimeters = ParseSavedDouble(value, savedSettings.SectionLineLengthMillimeters);
+                        else if (string.Equals(key, "ViewExpansionMarginMillimeters", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.ViewExpansionMarginMillimeters = ParseSavedDouble(value, savedSettings.ViewExpansionMarginMillimeters);
                     }
 
                     return savedSettings;
@@ -1004,7 +1099,11 @@ namespace HFT_DrawingHelper {
             public static void Save(
                 string viewAttributeName,
                 string markAttributeName,
-                string dimensionAttributeName
+                string dimensionAttributeName,
+                double depthUp,
+                double depthDown,
+                double sectionLineLengthMillimeters,
+                double viewExpansionMarginMillimeters
             ) {
                 try {
                     var directoryPath = Path.GetDirectoryName(SettingsPath);
@@ -1016,13 +1115,35 @@ namespace HFT_DrawingHelper {
                         new[] {
                             @"ViewAttributeName=" + NormalizeSavedValue(viewAttributeName),
                             @"MarkAttributeName=" + NormalizeSavedValue(markAttributeName),
-                            @"DimensionAttributeName=" + NormalizeSavedValue(dimensionAttributeName)
+                            @"DimensionAttributeName=" + NormalizeSavedValue(dimensionAttributeName),
+                            @"DepthUp=" + NormalizeSavedDouble(depthUp),
+                            @"DepthDown=" + NormalizeSavedDouble(depthDown),
+                            @"SectionLineLengthMillimeters=" + NormalizeSavedDouble(sectionLineLengthMillimeters),
+                            @"ViewExpansionMarginMillimeters=" + NormalizeSavedDouble(viewExpansionMarginMillimeters)
                         }
                     );
                 }
                 catch {
                     // ignored
                 }
+            }
+
+            private static double ParseSavedDouble(string value, double fallbackValue) {
+                if (string.IsNullOrWhiteSpace(value))
+                    return fallbackValue;
+
+                value = value.Trim().Replace(',', '.');
+                return double.TryParse(
+                    value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var parsedValue)
+                    ? parsedValue
+                    : fallbackValue;
+            }
+
+            private static string NormalizeSavedDouble(double value) {
+                return value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
             }
 
             private static string NormalizeSavedValue(string value) {

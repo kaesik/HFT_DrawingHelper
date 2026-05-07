@@ -168,6 +168,8 @@ namespace HFT_DrawingHelper {
 
                 if (!ok || sectionView == null || sectionMark == null) continue;
 
+                ApplySectionViewGeometrySettings(sectionView);
+
                 sectionView.Modify();
                 sectionMark.Modify();
 
@@ -190,6 +192,36 @@ namespace HFT_DrawingHelper {
         }
 
         #endregion
+
+        private static void ApplySectionViewGeometrySettings(TSD.View sectionView) {
+            if (sectionView == null) return;
+
+            ExpandSectionViewRestrictionBox(sectionView, _viewExpansionMarginMillimeters);
+        }
+
+        private static void ExpandSectionViewRestrictionBox(TSD.View sectionView, double marginMillimeters) {
+            if (sectionView == null) return;
+            if (marginMillimeters <= 0) return;
+
+            var restrictionBox = sectionView.RestrictionBox;
+            if (restrictionBox == null) return;
+
+            var minPoint = restrictionBox.MinPoint;
+            var maxPoint = restrictionBox.MaxPoint;
+            if (minPoint == null || maxPoint == null) return;
+
+            sectionView.RestrictionBox.MinPoint = new TSG.Point(
+                minPoint.X - marginMillimeters,
+                minPoint.Y - marginMillimeters,
+                minPoint.Z
+            );
+
+            sectionView.RestrictionBox.MaxPoint = new TSG.Point(
+                maxPoint.X + marginMillimeters,
+                maxPoint.Y + marginMillimeters,
+                maxPoint.Z
+            );
+        }
 
         #region Section Orientation
 
@@ -274,20 +306,24 @@ namespace HFT_DrawingHelper {
         private const double DefaultDepthUp = 1.0;
         private const double DefaultDepthDown = 1.0;
         private const double DefaultSectionLineLengthMillimeters = 300.0;
+        private const double DefaultViewExpansionMarginMillimeters = 100.0;
         private const double Gap = 10.0;
         private static double _depthUp = DefaultDepthUp;
         private static double _depthDown = DefaultDepthDown;
         private static double _sectionLineLengthMillimeters = DefaultSectionLineLengthMillimeters;
+        private static double _viewExpansionMarginMillimeters = DefaultViewExpansionMarginMillimeters;
 
         private static void UpdateSectionGeometrySettings(double depthUp, double depthDown,
-            double sectionLineLengthMillimeters) {
+            double sectionLineLengthMillimeters, double viewExpansionMarginMillimeters) {
             _depthUp = depthUp;
             _depthDown = depthDown;
             _sectionLineLengthMillimeters = sectionLineLengthMillimeters;
+            _viewExpansionMarginMillimeters = viewExpansionMarginMillimeters;
         }
 
         private static void ResetSectionGeometrySettingsToDefault() {
-            UpdateSectionGeometrySettings(DefaultDepthUp, DefaultDepthDown, DefaultSectionLineLengthMillimeters);
+            UpdateSectionGeometrySettings(DefaultDepthUp, DefaultDepthDown, DefaultSectionLineLengthMillimeters,
+                DefaultViewExpansionMarginMillimeters);
         }
 
         private static double GetSectionDepthUp() {
@@ -312,6 +348,14 @@ namespace HFT_DrawingHelper {
 
         private static double GetDefaultSectionLineLengthMillimeters() {
             return DefaultSectionLineLengthMillimeters;
+        }
+
+        private static double GetViewExpansionMarginMillimeters() {
+            return _viewExpansionMarginMillimeters;
+        }
+
+        private static double GetDefaultViewExpansionMarginMillimeters() {
+            return DefaultViewExpansionMarginMillimeters;
         }
 
         #endregion

@@ -192,6 +192,15 @@
                             <TextBox x:Name="SectionLineLengthMillimetersTextBox"
                                      Style="{StaticResource SettingsTextBoxStyle}"
                                      Height="32"
+                                     Margin="0,0,0,10"/>
+
+                            <TextBlock Text="ViewExpansionMarginMillimeters"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       FontSize="11"
+                                       Margin="0,0,0,4"/>
+                            <TextBox x:Name="ViewExpansionMarginMillimetersTextBox"
+                                     Style="{StaticResource SettingsTextBoxStyle}"
+                                     Height="32"
                                      Margin="0,0,0,0"/>
 
                             <Border Height="1"

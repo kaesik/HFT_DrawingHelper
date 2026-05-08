@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -53,17 +54,17 @@ namespace HFT_DrawingHelper {
         private ListBox _partItemsList;
 
         private bool _sectionAttributeOptionsLoaded;
+        private TextBox _sectionDepthMillimetersTextBox;
+        private TextBox _sectionHeightMillimetersTextBox;
+        private TextBox _sectionWidthMillimetersTextBox;
         private TextBlock _settingsPanelHeaderText;
-        private TextBox _depthUpTextBox;
-        private TextBox _depthDownTextBox;
-        private TextBox _sectionLineLengthMillimetersTextBox;
-        private TextBox _viewExpansionMarginMillimetersTextBox;
 
         // Settings side panel sync
         private TabControl _settingsTabs;
         private CheckBox _shortExtensionLineCheckBox;
 
         private SidePanelMode _sidePanelMode = SidePanelMode.None;
+        private bool _splitButtonGlobalClickHandlerIsWired;
         private CheckBox _verticalTotalDimensionCheckBox;
 
         private ComboBox _viewAttributeNameComboBox;
@@ -99,6 +100,9 @@ namespace HFT_DrawingHelper {
             _markAttributeNameComboBox = FindNamedDescendant<ComboBox>("MarkAttributeNameComboBox");
             _marksStatusTextBlock = FindNamedDescendant<TextBlock>("MarksStatusTextBlock");
             _dimensionAttributeNameComboBox = FindNamedDescendant<ComboBox>("DimensionAttributeNameComboBox");
+            _sectionDepthMillimetersTextBox = FindNamedDescendant<TextBox>("SectionDepthMillimetersTextBox");
+            _sectionHeightMillimetersTextBox = FindNamedDescendant<TextBox>("SectionHeightMillimetersTextBox");
+            _sectionWidthMillimetersTextBox = FindNamedDescendant<TextBox>("SectionWidthMillimetersTextBox");
             _partItemsList = FindNamedDescendant<ListBox>("PartItemsList");
             _edgeGroupsList = FindNamedDescendant<ListBox>("EdgeGroupsList");
             FindNamedDescendant<FrameworkElement>("PartSelectionPanel");
@@ -120,10 +124,6 @@ namespace HFT_DrawingHelper {
             _dimensionLeftCheckBox = FindNamedDescendant<CheckBox>("DimensionLeftCheckBox");
             _verticalTotalDimensionCheckBox = FindNamedDescendant<CheckBox>("VerticalTotalDimensionCheckBox");
             _shortExtensionLineCheckBox = FindNamedDescendant<CheckBox>("ShortExtensionLineCheckBox");
-            _depthUpTextBox = FindNamedDescendant<TextBox>("DepthUpTextBox");
-            _depthDownTextBox = FindNamedDescendant<TextBox>("DepthDownTextBox");
-            _sectionLineLengthMillimetersTextBox = FindNamedDescendant<TextBox>("SectionLineLengthMillimetersTextBox");
-            _viewExpansionMarginMillimetersTextBox = FindNamedDescendant<TextBox>("ViewExpansionMarginMillimetersTextBox");
 
             // Settings panel sync
             _settingsTabs = FindNamedDescendant<TabControl>("SettingsTabs");
@@ -150,12 +150,7 @@ namespace HFT_DrawingHelper {
             AddClickHandler("DeselectAllPartsButton", DeselectAllPartsButton_Click);
             AddClickHandler("SelectAllEdgesButton", SelectAllEdgesButton_Click);
             AddClickHandler("DeselectAllEdgesButton", DeselectAllEdgesButton_Click);
-            AddClickHandler("SetWeldMarkSuffixOButton", SetWeldMarkSuffixOButton_Click);
-            AddClickHandler("SetWeldMarkSuffixUButton", SetWeldMarkSuffixUButton_Click);
-            AddClickHandler("ClearWeldMarkSuffixButton", ClearWeldMarkSuffixButton_Click);
-            AddClickHandler("RestoreWeldMarkSuffixButton", RestoreWeldMarkSuffixButton_Click);
-            AddClickHandler("HideSelectedDrawingObjectsButton", HideSelectedDrawingObjectsButton_Click);
-            AddClickHandler("ShowSelectedDrawingObjectsButton", ShowSelectedDrawingObjectsButton_Click);
+            WireSplitButtonGlobalClickHandler();
 
             if (_partItemsList != null) {
                 _partItemsList.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(PartItemsList_Click), true);
@@ -170,8 +165,57 @@ namespace HFT_DrawingHelper {
 
         private void AddClickHandler(string elementName, RoutedEventHandler handler) {
             var button = FindNamedDescendant<ButtonBase>(elementName);
-            if (button != null)
-                button.Click += handler;
+            if (button == null)
+                return;
+
+            button.Click -= handler;
+            button.Click += handler;
+        }
+
+        private void WireSplitButtonGlobalClickHandler() {
+            if (_splitButtonGlobalClickHandlerIsWired)
+                return;
+
+            AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(SplitButtonGlobal_Click), true);
+            _splitButtonGlobalClickHandlerIsWired = true;
+        }
+
+        private void SplitButtonGlobal_Click(object sender, RoutedEventArgs e) {
+            var sourceElement = e.OriginalSource as DependencyObject;
+            var button = FindAncestorOrSelf<ButtonBase>(sourceElement);
+            if (button == null)
+                return;
+
+            switch (button.Name) {
+                case "SetWeldMarkSuffixOButton":
+                    SetWeldMarkSuffixOButton_Click(button, e);
+                    e.Handled = true;
+                    break;
+                case "SetWeldMarkSuffixUButton":
+                    SetWeldMarkSuffixUButton_Click(button, e);
+                    e.Handled = true;
+                    break;
+                case "ClearWeldMarkSuffixButton":
+                    ClearWeldMarkSuffixButton_Click(button, e);
+                    e.Handled = true;
+                    break;
+                case "RestoreWeldMarkSuffixButton":
+                    RestoreWeldMarkSuffixButton_Click(button, e);
+                    e.Handled = true;
+                    break;
+                case "AutoWeldMarkSuffixButton":
+                    AutoWeldMarkSuffixButton_Click(button, e);
+                    e.Handled = true;
+                    break;
+                case "HideSelectedDrawingObjectsButton":
+                    HideSelectedDrawingObjectsButton_Click(button, e);
+                    e.Handled = true;
+                    break;
+                case "ShowSelectedDrawingObjectsButton":
+                    ShowSelectedDrawingObjectsButton_Click(button, e);
+                    e.Handled = true;
+                    break;
+            }
         }
 
         private void InitializeStartScreen(string modelName) {
@@ -222,6 +266,10 @@ namespace HFT_DrawingHelper {
 
             SetStartScreenVisibility(MainTabs.SelectedIndex < 0);
             SyncSettingsPanel(MainTabs.SelectedIndex);
+            Dispatcher.BeginInvoke(new Action(() => {
+                InitializeSplitXamlReferences();
+                WireSplitXamlEvents();
+            }), DispatcherPriority.Loaded);
         }
 
         private void ResetMainTabsToStartScreen() {
@@ -494,14 +542,15 @@ namespace HFT_DrawingHelper {
                 return;
             }
 
-            if (!TryReadPositiveDouble(_depthUpTextBox, "DepthUp", out var depthUp)) return;
-            if (!TryReadPositiveDouble(_depthDownTextBox, "DepthDown", out var depthDown)) return;
-            if (!TryReadPositiveDouble(_sectionLineLengthMillimetersTextBox, "SectionLineLengthMillimeters", out var sectionLineLengthMillimeters)) return;
-            if (!TryReadNonNegativeDouble(_viewExpansionMarginMillimetersTextBox, "ViewExpansionMarginMillimeters", out var viewExpansionMarginMillimeters)) return;
+            if (!TryReadSectionGeometrySettingsFromPanel(
+                    out var sectionDepthMillimeters,
+                    out var sectionHeightMillimeters,
+                    out var sectionWidthMillimeters))
+                return;
 
             UpdateSectionAttributeNames(viewAttributeName, markAttributeName);
             UpdateDimensionAttributeName(dimensionAttributeName);
-            UpdateSectionGeometrySettings(depthUp, depthDown, sectionLineLengthMillimeters, viewExpansionMarginMillimeters);
+            UpdateSectionGeometrySettings(sectionDepthMillimeters, sectionHeightMillimeters, sectionWidthMillimeters);
             SaveCurrentSectionSettings();
             LoadSectionSettingsIntoPanel();
         }
@@ -528,14 +577,9 @@ namespace HFT_DrawingHelper {
                 UpdateDimensionAttributeName(savedSettings.DimensionAttributeName);
 
             UpdateSectionGeometrySettings(
-                savedSettings.DepthUp > 0 ? savedSettings.DepthUp : GetSectionDepthUp(),
-                savedSettings.DepthDown > 0 ? savedSettings.DepthDown : GetSectionDepthDown(),
-                savedSettings.SectionLineLengthMillimeters > 0
-                    ? savedSettings.SectionLineLengthMillimeters
-                    : GetSectionLineLengthMillimeters(),
-                savedSettings.ViewExpansionMarginMillimeters >= 0
-                    ? savedSettings.ViewExpansionMarginMillimeters
-                    : GetViewExpansionMarginMillimeters()
+                savedSettings.SectionDepthMillimeters,
+                savedSettings.SectionHeightMillimeters,
+                savedSettings.SectionWidthMillimeters
             );
         }
 
@@ -544,10 +588,9 @@ namespace HFT_DrawingHelper {
                 _viewAttributeName,
                 _markAttributeName,
                 _dimensionAttributeName,
-                GetSectionDepthUp(),
-                GetSectionDepthDown(),
-                GetSectionLineLengthMillimeters(),
-                GetViewExpansionMarginMillimeters()
+                GetSectionDepthMillimeters(),
+                GetSectionHeightMillimeters(),
+                GetSectionWidthMillimeters()
             );
         }
 
@@ -655,10 +698,65 @@ namespace HFT_DrawingHelper {
                 .FirstOrDefault(
                     item => string.Equals(item, _dimensionAttributeName, StringComparison.OrdinalIgnoreCase));
 
-            SetTextBoxValue(_depthUpTextBox, GetSectionDepthUp());
-            SetTextBoxValue(_depthDownTextBox, GetSectionDepthDown());
-            SetTextBoxValue(_sectionLineLengthMillimetersTextBox, GetSectionLineLengthMillimeters());
-            SetTextBoxValue(_viewExpansionMarginMillimetersTextBox, GetViewExpansionMarginMillimeters());
+            SetTextBoxDoubleValue(_sectionDepthMillimetersTextBox, GetSectionDepthMillimeters());
+            SetTextBoxDoubleValue(_sectionHeightMillimetersTextBox, GetSectionHeightMillimeters());
+            SetTextBoxDoubleValue(_sectionWidthMillimetersTextBox, GetSectionWidthMillimeters());
+        }
+
+        private bool TryReadSectionGeometrySettingsFromPanel(
+            out double sectionDepthMillimeters,
+            out double sectionHeightMillimeters,
+            out double sectionWidthMillimeters
+        ) {
+            sectionDepthMillimeters = GetSectionDepthMillimeters();
+            sectionHeightMillimeters = GetSectionHeightMillimeters();
+            sectionWidthMillimeters = GetSectionWidthMillimeters();
+
+            return TryReadPositiveDouble(_sectionDepthMillimetersTextBox, "Głębokość", out sectionDepthMillimeters) &&
+                   TryReadPositiveDouble(_sectionHeightMillimetersTextBox, "Wysokość przekroju",
+                       out sectionHeightMillimeters) &&
+                   TryReadNonNegativeDouble(_sectionWidthMillimetersTextBox, "Szerokość", out sectionWidthMillimeters);
+        }
+
+        private static bool TryReadPositiveDouble(TextBox textBox, string label, out double value) {
+            if (TryReadDouble(textBox, label, out value) && value > 0)
+                return true;
+
+            MessageBox.Show(label + " musi być liczbą większą od 0.");
+            return false;
+        }
+
+        private static bool TryReadNonNegativeDouble(TextBox textBox, string label, out double value) {
+            if (TryReadDouble(textBox, label, out value) && value >= 0)
+                return true;
+
+            MessageBox.Show(label + " musi być liczbą większą lub równą 0.");
+            return false;
+        }
+
+        private static bool TryReadDouble(TextBox textBox, string label, out double value) {
+            value = 0;
+            if (textBox == null) {
+                MessageBox.Show("Nie znaleziono pola: " + label + ".");
+                return false;
+            }
+
+            var rawValue = textBox.Text.Trim().Replace(',', '.');
+            if (double.TryParse(
+                    rawValue,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out value))
+                return true;
+
+            MessageBox.Show(label + " musi być poprawną liczbą.");
+            return false;
+        }
+
+        private static void SetTextBoxDoubleValue(TextBox textBox, double value) {
+            if (textBox == null) return;
+
+            textBox.Text = value.ToString("0.###", CultureInfo.InvariantCulture);
         }
 
         private void LoadSectionSettingsFallbackOnly() {
@@ -678,55 +776,6 @@ namespace HFT_DrawingHelper {
             );
 
             LoadSectionSettingsIntoPanel();
-        }
-
-
-        private static void SetTextBoxValue(TextBox textBox, double value) {
-            if (textBox == null) return;
-            textBox.Text = value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-        }
-
-        private static bool TryReadPositiveDouble(TextBox textBox, string fieldName, out double value) {
-            if (!TryReadDouble(textBox, fieldName, out value))
-                return false;
-
-            if (value > 0)
-                return true;
-
-            MessageBox.Show(fieldName + " musi być większe od 0.");
-            return false;
-        }
-
-        private static bool TryReadNonNegativeDouble(TextBox textBox, string fieldName, out double value) {
-            if (!TryReadDouble(textBox, fieldName, out value))
-                return false;
-
-            if (value >= 0)
-                return true;
-
-            MessageBox.Show(fieldName + " nie może być mniejsze od 0.");
-            return false;
-        }
-
-        private static bool TryReadDouble(TextBox textBox, string fieldName, out double value) {
-            value = 0;
-
-            var text = textBox?.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(text)) {
-                MessageBox.Show(fieldName + " nie może być puste.");
-                return false;
-            }
-
-            text = text.Replace(',', '.');
-            if (double.TryParse(
-                    text,
-                    System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    out value))
-                return true;
-
-            MessageBox.Show(fieldName + " musi być liczbą.");
-            return false;
         }
 
         private static void ApplyAttributeCollectionSnapshot(
@@ -1040,10 +1089,9 @@ namespace HFT_DrawingHelper {
             public string ViewAttributeName { get; set; }
             public string MarkAttributeName { get; set; }
             public string DimensionAttributeName { get; set; }
-            public double DepthUp { get; set; } = -1;
-            public double DepthDown { get; set; } = -1;
-            public double SectionLineLengthMillimeters { get; set; } = -1;
-            public double ViewExpansionMarginMillimeters { get; set; } = -1;
+            public double SectionDepthMillimeters { get; set; } = GetDefaultSectionDepthMillimeters();
+            public double SectionHeightMillimeters { get; set; } = GetDefaultSectionHeightMillimeters();
+            public double SectionWidthMillimeters { get; set; } = GetDefaultSectionWidthMillimeters();
         }
 
         private static class DrawingAttributeSettingsService {
@@ -1079,14 +1127,22 @@ namespace HFT_DrawingHelper {
                             savedSettings.MarkAttributeName = value;
                         else if (string.Equals(key, "DimensionAttributeName", StringComparison.OrdinalIgnoreCase))
                             savedSettings.DimensionAttributeName = value;
-                        else if (string.Equals(key, "DepthUp", StringComparison.OrdinalIgnoreCase))
-                            savedSettings.DepthUp = ParseSavedDouble(value, savedSettings.DepthUp);
-                        else if (string.Equals(key, "DepthDown", StringComparison.OrdinalIgnoreCase))
-                            savedSettings.DepthDown = ParseSavedDouble(value, savedSettings.DepthDown);
-                        else if (string.Equals(key, "SectionLineLengthMillimeters", StringComparison.OrdinalIgnoreCase))
-                            savedSettings.SectionLineLengthMillimeters = ParseSavedDouble(value, savedSettings.SectionLineLengthMillimeters);
-                        else if (string.Equals(key, "ViewExpansionMarginMillimeters", StringComparison.OrdinalIgnoreCase))
-                            savedSettings.ViewExpansionMarginMillimeters = ParseSavedDouble(value, savedSettings.ViewExpansionMarginMillimeters);
+                        else if (string.Equals(key, "SectionDepthMillimeters", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.SectionDepthMillimeters =
+                                ParseSavedDouble(value, savedSettings.SectionDepthMillimeters);
+                        else if (string.Equals(key, "SectionHeightMillimeters", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(key, "SectionLineLengthMillimeters", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.SectionHeightMillimeters =
+                                ParseSavedDouble(value, savedSettings.SectionHeightMillimeters);
+                        else if (string.Equals(key, "SectionWidthMillimeters", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(key, "ViewExpansionMarginMillimeters",
+                                     StringComparison.OrdinalIgnoreCase))
+                            savedSettings.SectionWidthMillimeters =
+                                ParseSavedDouble(value, savedSettings.SectionWidthMillimeters);
+                        else if (string.Equals(key, "DepthUp", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(key, "DepthDown", StringComparison.OrdinalIgnoreCase))
+                            savedSettings.SectionDepthMillimeters =
+                                ParseSavedDouble(value, savedSettings.SectionDepthMillimeters);
                     }
 
                     return savedSettings;
@@ -1100,10 +1156,9 @@ namespace HFT_DrawingHelper {
                 string viewAttributeName,
                 string markAttributeName,
                 string dimensionAttributeName,
-                double depthUp,
-                double depthDown,
-                double sectionLineLengthMillimeters,
-                double viewExpansionMarginMillimeters
+                double sectionDepthMillimeters,
+                double sectionHeightMillimeters,
+                double sectionWidthMillimeters
             ) {
                 try {
                     var directoryPath = Path.GetDirectoryName(SettingsPath);
@@ -1116,10 +1171,9 @@ namespace HFT_DrawingHelper {
                             @"ViewAttributeName=" + NormalizeSavedValue(viewAttributeName),
                             @"MarkAttributeName=" + NormalizeSavedValue(markAttributeName),
                             @"DimensionAttributeName=" + NormalizeSavedValue(dimensionAttributeName),
-                            @"DepthUp=" + NormalizeSavedDouble(depthUp),
-                            @"DepthDown=" + NormalizeSavedDouble(depthDown),
-                            @"SectionLineLengthMillimeters=" + NormalizeSavedDouble(sectionLineLengthMillimeters),
-                            @"ViewExpansionMarginMillimeters=" + NormalizeSavedDouble(viewExpansionMarginMillimeters)
+                            @"SectionDepthMillimeters=" + NormalizeSavedDouble(sectionDepthMillimeters),
+                            @"SectionHeightMillimeters=" + NormalizeSavedDouble(sectionHeightMillimeters),
+                            @"SectionWidthMillimeters=" + NormalizeSavedDouble(sectionWidthMillimeters)
                         }
                     );
                 }
@@ -1135,15 +1189,15 @@ namespace HFT_DrawingHelper {
                 value = value.Trim().Replace(',', '.');
                 return double.TryParse(
                     value,
-                    System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
                     out var parsedValue)
                     ? parsedValue
                     : fallbackValue;
             }
 
             private static string NormalizeSavedDouble(double value) {
-                return value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+                return value.ToString("0.###", CultureInfo.InvariantCulture);
             }
 
             private static string NormalizeSavedValue(string value) {

@@ -135,7 +135,7 @@ namespace HFT_DrawingHelper {
                 var normalX = -dy / length;
                 var normalY = dx / length;
 
-                var halfLength = _sectionLineLengthMillimeters * 0.5;
+                var halfLength = _sectionHeightMillimeters * 0.5;
 
                 var startPoint = new TSG.Point(
                     middlePoint.X - normalX * halfLength,
@@ -158,8 +158,8 @@ namespace HFT_DrawingHelper {
                     startPoint,
                     endPoint,
                     insertionPoint,
-                    _depthUp,
-                    _depthDown,
+                    _sectionDepthMillimeters,
+                    _sectionDepthMillimeters,
                     viewAttributes,
                     markAttributes,
                     out var sectionView,
@@ -196,7 +196,7 @@ namespace HFT_DrawingHelper {
         private static void ApplySectionViewGeometrySettings(TSD.View sectionView) {
             if (sectionView == null) return;
 
-            ExpandSectionViewRestrictionBox(sectionView, _viewExpansionMarginMillimeters);
+            ExpandSectionViewRestrictionBox(sectionView, _sectionWidthMillimeters);
         }
 
         private static void ExpandSectionViewRestrictionBox(TSD.View sectionView, double marginMillimeters) {
@@ -303,59 +303,54 @@ namespace HFT_DrawingHelper {
         private const string DefaultMarkAttributeName = "standard";
         private static string _viewAttributeName = DefaultViewAttributeName;
         private static string _markAttributeName = DefaultMarkAttributeName;
-        private const double DefaultDepthUp = 1.0;
-        private const double DefaultDepthDown = 1.0;
-        private const double DefaultSectionLineLengthMillimeters = 300.0;
-        private const double DefaultViewExpansionMarginMillimeters = 100.0;
+        private const double DefaultSectionDepthMillimeters = 1.0;
+        private const double DefaultSectionHeightMillimeters = 300.0;
+        private const double DefaultSectionWidthMillimeters = 100.0;
         private const double Gap = 10.0;
-        private static double _depthUp = DefaultDepthUp;
-        private static double _depthDown = DefaultDepthDown;
-        private static double _sectionLineLengthMillimeters = DefaultSectionLineLengthMillimeters;
-        private static double _viewExpansionMarginMillimeters = DefaultViewExpansionMarginMillimeters;
+        private static double _sectionDepthMillimeters = DefaultSectionDepthMillimeters;
+        private static double _sectionHeightMillimeters = DefaultSectionHeightMillimeters;
+        private static double _sectionWidthMillimeters = DefaultSectionWidthMillimeters;
 
-        private static void UpdateSectionGeometrySettings(double depthUp, double depthDown,
-            double sectionLineLengthMillimeters, double viewExpansionMarginMillimeters) {
-            _depthUp = depthUp;
-            _depthDown = depthDown;
-            _sectionLineLengthMillimeters = sectionLineLengthMillimeters;
-            _viewExpansionMarginMillimeters = viewExpansionMarginMillimeters;
+        private static void UpdateSectionGeometrySettings(
+            double sectionDepthMillimeters,
+            double sectionHeightMillimeters,
+            double sectionWidthMillimeters
+        ) {
+            _sectionDepthMillimeters = sectionDepthMillimeters;
+            _sectionHeightMillimeters = sectionHeightMillimeters;
+            _sectionWidthMillimeters = sectionWidthMillimeters;
         }
 
         private static void ResetSectionGeometrySettingsToDefault() {
-            UpdateSectionGeometrySettings(DefaultDepthUp, DefaultDepthDown, DefaultSectionLineLengthMillimeters,
-                DefaultViewExpansionMarginMillimeters);
+            UpdateSectionGeometrySettings(
+                DefaultSectionDepthMillimeters,
+                DefaultSectionHeightMillimeters,
+                DefaultSectionWidthMillimeters
+            );
         }
 
-        private static double GetSectionDepthUp() {
-            return _depthUp;
+        private static double GetSectionDepthMillimeters() {
+            return _sectionDepthMillimeters;
         }
 
-        private static double GetSectionDepthDown() {
-            return _depthDown;
+        private static double GetSectionHeightMillimeters() {
+            return _sectionHeightMillimeters;
         }
 
-        private static double GetSectionLineLengthMillimeters() {
-            return _sectionLineLengthMillimeters;
+        private static double GetSectionWidthMillimeters() {
+            return _sectionWidthMillimeters;
         }
 
-        private static double GetDefaultSectionDepthUp() {
-            return DefaultDepthUp;
+        private static double GetDefaultSectionDepthMillimeters() {
+            return DefaultSectionDepthMillimeters;
         }
 
-        private static double GetDefaultSectionDepthDown() {
-            return DefaultDepthDown;
+        private static double GetDefaultSectionHeightMillimeters() {
+            return DefaultSectionHeightMillimeters;
         }
 
-        private static double GetDefaultSectionLineLengthMillimeters() {
-            return DefaultSectionLineLengthMillimeters;
-        }
-
-        private static double GetViewExpansionMarginMillimeters() {
-            return _viewExpansionMarginMillimeters;
-        }
-
-        private static double GetDefaultViewExpansionMarginMillimeters() {
-            return DefaultViewExpansionMarginMillimeters;
+        private static double GetDefaultSectionWidthMillimeters() {
+            return DefaultSectionWidthMillimeters;
         }
 
         #endregion

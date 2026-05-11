@@ -64,7 +64,6 @@ namespace HFT_DrawingHelper {
         private CheckBox _shortExtensionLineCheckBox;
 
         private SidePanelMode _sidePanelMode = SidePanelMode.None;
-        private bool _splitButtonGlobalClickHandlerIsWired;
         private CheckBox _verticalTotalDimensionCheckBox;
 
         private ComboBox _viewAttributeNameComboBox;
@@ -110,6 +109,7 @@ namespace HFT_DrawingHelper {
             FindNamedDescendant<Button>("DrawEdgesButton");
             FindNamedDescendant<Button>("GetEdgesButton");
             FindNamedDescendant<Button>("AddSectionsButton");
+            FindNamedDescendant<Button>("AutoAddSectionsAtWeldMarksButton");
             FindNamedDescendant<Button>("ShowSelectedPartsButton");
             FindNamedDescendant<Button>("AddDimensionsButton");
             FindNamedDescendant<Button>("RotateViewByTwoPointsButton");
@@ -141,6 +141,7 @@ namespace HFT_DrawingHelper {
             AddClickHandler("DrawEdgesButton", DrawEdgesButton_Click);
             AddClickHandler("GetEdgesButton", GetEdgesButton_Click);
             AddClickHandler("AddSectionsButton", AddSectionsButton_Click);
+            AddClickHandler("AutoAddSectionsAtWeldMarksButton", AutoAddSectionsAtWeldMarksButton_Click);
             AddClickHandler("ShowSelectedPartsButton", ShowSelectedPartsButton_Click);
             AddClickHandler("AddDimensionsButton", AddDimensionsButton_Click);
             AddClickHandler("RotateViewByTwoPointsButton", RotateViewByTwoPoints_Click);
@@ -150,7 +151,13 @@ namespace HFT_DrawingHelper {
             AddClickHandler("DeselectAllPartsButton", DeselectAllPartsButton_Click);
             AddClickHandler("SelectAllEdgesButton", SelectAllEdgesButton_Click);
             AddClickHandler("DeselectAllEdgesButton", DeselectAllEdgesButton_Click);
-            WireSplitButtonGlobalClickHandler();
+            AddClickHandler("SetWeldMarkSuffixOButton", SetWeldMarkSuffixOButton_Click);
+            AddClickHandler("SetWeldMarkSuffixUButton", SetWeldMarkSuffixUButton_Click);
+            AddClickHandler("ClearWeldMarkSuffixButton", ClearWeldMarkSuffixButton_Click);
+            AddClickHandler("RestoreWeldMarkSuffixButton", RestoreWeldMarkSuffixButton_Click);
+            AddClickHandler("AutoWeldMarkSuffixButton", AutoWeldMarkSuffixButton_Click);
+            AddClickHandler("HideSelectedDrawingObjectsButton", HideSelectedDrawingObjectsButton_Click);
+            AddClickHandler("ShowSelectedDrawingObjectsButton", ShowSelectedDrawingObjectsButton_Click);
 
             if (_partItemsList != null) {
                 _partItemsList.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(PartItemsList_Click), true);
@@ -165,57 +172,8 @@ namespace HFT_DrawingHelper {
 
         private void AddClickHandler(string elementName, RoutedEventHandler handler) {
             var button = FindNamedDescendant<ButtonBase>(elementName);
-            if (button == null)
-                return;
-
-            button.Click -= handler;
-            button.Click += handler;
-        }
-
-        private void WireSplitButtonGlobalClickHandler() {
-            if (_splitButtonGlobalClickHandlerIsWired)
-                return;
-
-            AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(SplitButtonGlobal_Click), true);
-            _splitButtonGlobalClickHandlerIsWired = true;
-        }
-
-        private void SplitButtonGlobal_Click(object sender, RoutedEventArgs e) {
-            var sourceElement = e.OriginalSource as DependencyObject;
-            var button = FindAncestorOrSelf<ButtonBase>(sourceElement);
-            if (button == null)
-                return;
-
-            switch (button.Name) {
-                case "SetWeldMarkSuffixOButton":
-                    SetWeldMarkSuffixOButton_Click(button, e);
-                    e.Handled = true;
-                    break;
-                case "SetWeldMarkSuffixUButton":
-                    SetWeldMarkSuffixUButton_Click(button, e);
-                    e.Handled = true;
-                    break;
-                case "ClearWeldMarkSuffixButton":
-                    ClearWeldMarkSuffixButton_Click(button, e);
-                    e.Handled = true;
-                    break;
-                case "RestoreWeldMarkSuffixButton":
-                    RestoreWeldMarkSuffixButton_Click(button, e);
-                    e.Handled = true;
-                    break;
-                case "AutoWeldMarkSuffixButton":
-                    AutoWeldMarkSuffixButton_Click(button, e);
-                    e.Handled = true;
-                    break;
-                case "HideSelectedDrawingObjectsButton":
-                    HideSelectedDrawingObjectsButton_Click(button, e);
-                    e.Handled = true;
-                    break;
-                case "ShowSelectedDrawingObjectsButton":
-                    ShowSelectedDrawingObjectsButton_Click(button, e);
-                    e.Handled = true;
-                    break;
-            }
+            if (button != null)
+                button.Click += handler;
         }
 
         private void InitializeStartScreen(string modelName) {
@@ -266,10 +224,6 @@ namespace HFT_DrawingHelper {
 
             SetStartScreenVisibility(MainTabs.SelectedIndex < 0);
             SyncSettingsPanel(MainTabs.SelectedIndex);
-            Dispatcher.BeginInvoke(new Action(() => {
-                InitializeSplitXamlReferences();
-                WireSplitXamlEvents();
-            }), DispatcherPriority.Loaded);
         }
 
         private void ResetMainTabsToStartScreen() {
@@ -464,6 +418,10 @@ namespace HFT_DrawingHelper {
             }
 
             AddSections(FormatEdgeNumbersForInput(checkedEdgeNumbers));
+        }
+
+        private void AutoAddSectionsAtWeldMarksButton_Click(object sender, RoutedEventArgs e) {
+            AutoAddSectionsAtWeldMarks();
         }
 
         private void AddDimensionsButton_Click(object sender, RoutedEventArgs e) {
@@ -741,7 +699,7 @@ namespace HFT_DrawingHelper {
                 return false;
             }
 
-            var rawValue = textBox.Text.Trim().Replace(',', '.');
+            var rawValue = textBox.Text == null ? string.Empty : textBox.Text.Trim().Replace(',', '.');
             if (double.TryParse(
                     rawValue,
                     NumberStyles.Float,

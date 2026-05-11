@@ -999,29 +999,13 @@ namespace HFT_DrawingHelper {
                     vertices = RemoveSequentialDuplicatePoints(vertices);
                     if (vertices.Count < 2) continue;
 
-                    for (var index = 0; index < vertices.Count; index++) {
-                        var startPoint = vertices[index];
-                        var endPoint = vertices[(index + 1) % vertices.Count];
-
-                        if (ComputeDistance2D(startPoint, endPoint) <= DuplicateToleranceMillimeters)
-                            continue;
-
-                        var normalizedStartPoint = startPoint;
-                        var normalizedEndPoint = endPoint;
-
-                        if (ComparePointsLexicographically(normalizedStartPoint, normalizedEndPoint) > 0) {
-                            normalizedStartPoint = endPoint;
-                            normalizedEndPoint = startPoint;
-                        }
-
-                        var key = BuildSegmentKey(normalizedStartPoint, normalizedEndPoint);
-                        if (!seenKeys.Add(key)) continue;
-
-                        result.Add(new ProjectedSegment2D {
-                            StartPoint = new TSG.Point(normalizedStartPoint.X, normalizedStartPoint.Y, 0),
-                            EndPoint = new TSG.Point(normalizedEndPoint.X, normalizedEndPoint.Y, 0)
-                        });
-                    }
+                    for (var index = 0; index < vertices.Count; index++)
+                        TryAddUniqueProjectedSegment(
+                            result,
+                            seenKeys,
+                            vertices[index],
+                            vertices[(index + 1) % vertices.Count]
+                        );
                 }
             }
 
@@ -1056,32 +1040,46 @@ namespace HFT_DrawingHelper {
                         GetPointParameterOnSegment(point, currentSegment.StartPoint, currentSegment.EndPoint))
                     .ToList();
 
-                for (var pointIndex = 0; pointIndex < splitPoints.Count - 1; pointIndex++) {
-                    var startPoint = splitPoints[pointIndex];
-                    var endPoint = splitPoints[pointIndex + 1];
-
-                    if (ComputeDistance2D(startPoint, endPoint) <= DuplicateToleranceMillimeters)
-                        continue;
-
-                    var normalizedStartPoint = startPoint;
-                    var normalizedEndPoint = endPoint;
-
-                    if (ComparePointsLexicographically(normalizedStartPoint, normalizedEndPoint) > 0) {
-                        normalizedStartPoint = endPoint;
-                        normalizedEndPoint = startPoint;
-                    }
-
-                    var key = BuildSegmentKey(normalizedStartPoint, normalizedEndPoint);
-                    if (!uniqueKeys.Add(key)) continue;
-
-                    result.Add(new ProjectedSegment2D {
-                        StartPoint = new TSG.Point(normalizedStartPoint.X, normalizedStartPoint.Y, 0),
-                        EndPoint = new TSG.Point(normalizedEndPoint.X, normalizedEndPoint.Y, 0)
-                    });
-                }
+                for (var pointIndex = 0; pointIndex < splitPoints.Count - 1; pointIndex++)
+                    TryAddUniqueProjectedSegment(
+                        result,
+                        uniqueKeys,
+                        splitPoints[pointIndex],
+                        splitPoints[pointIndex + 1]
+                    );
             }
 
             return result;
+        }
+
+        private static void TryAddUniqueProjectedSegment(
+            List<ProjectedSegment2D> result,
+            HashSet<string> uniqueKeys,
+            TSG.Point startPoint,
+            TSG.Point endPoint
+        ) {
+            if (result == null || uniqueKeys == null || startPoint == null || endPoint == null)
+                return;
+
+            if (ComputeDistance2D(startPoint, endPoint) <= DuplicateToleranceMillimeters)
+                return;
+
+            var normalizedStartPoint = startPoint;
+            var normalizedEndPoint = endPoint;
+
+            if (ComparePointsLexicographically(normalizedStartPoint, normalizedEndPoint) > 0) {
+                normalizedStartPoint = endPoint;
+                normalizedEndPoint = startPoint;
+            }
+
+            var key = BuildSegmentKey(normalizedStartPoint, normalizedEndPoint);
+            if (!uniqueKeys.Add(key))
+                return;
+
+            result.Add(new ProjectedSegment2D {
+                StartPoint = new TSG.Point(normalizedStartPoint.X, normalizedStartPoint.Y, 0),
+                EndPoint = new TSG.Point(normalizedEndPoint.X, normalizedEndPoint.Y, 0)
+            });
         }
 
         private static void AddSegmentIntersections(

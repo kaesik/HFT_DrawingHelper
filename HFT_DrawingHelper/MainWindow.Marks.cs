@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
+using TSG = Tekla.Structures.Geometry3d;
 using TSM = Tekla.Structures.Model;
 
 namespace HFT_DrawingHelper {
@@ -49,17 +50,8 @@ namespace HFT_DrawingHelper {
         }
 
         private void ApplyWeldMarkSuffix(string newValue) {
-            var drawingHandler = GetConnectedDrawingHandler();
-
-            if (drawingHandler == null)
+            if (!TryGetActiveDrawing(out var drawingHandler, out var activeDrawing))
                 return;
-
-            var activeDrawing = drawingHandler.GetActiveDrawing();
-
-            if (activeDrawing == null) {
-                SetMarksStatus("Brak otwartego rysunku.");
-                return;
-            }
 
             var selectedObjects = drawingHandler.GetDrawingObjectSelector().GetSelected();
 
@@ -122,17 +114,8 @@ namespace HFT_DrawingHelper {
         }
 
         private void ApplyAutomaticWeldMarkSuffix() {
-            var drawingHandler = GetConnectedDrawingHandler();
-
-            if (drawingHandler == null)
+            if (!TryGetActiveDrawing(out var drawingHandler, out var activeDrawing))
                 return;
-
-            var activeDrawing = drawingHandler.GetActiveDrawing();
-
-            if (activeDrawing == null) {
-                SetMarksStatus("Brak otwartego rysunku.");
-                return;
-            }
 
             var selectedObjects = drawingHandler.GetDrawingObjectSelector().GetSelected();
 
@@ -169,13 +152,6 @@ namespace HFT_DrawingHelper {
                         continue;
                     }
 
-                    if (!(markPart is TSM.ContourPlate)) {
-                        MessageBox.Show("działa poprawnie tylko na counterplate", "Automatyczne markowanie",
-                            MessageBoxButton.OK, MessageBoxImage.Warning);
-                        SetMarksStatus("Przerwano: działa poprawnie tylko na counterplate.");
-                        return;
-                    }
-
                     if (!TryGetDrawingView(mark, out var view) || view == null) {
                         skipped++;
                         withoutView++;
@@ -188,7 +164,7 @@ namespace HFT_DrawingHelper {
                         continue;
                     }
 
-                    var newSuffix = GetAutomaticSuffix(markPart, mainPart);
+                    var newSuffix = GetAutomaticSuffix(markPart, mainPart, view);
 
                     if (string.IsNullOrEmpty(newSuffix)) {
                         skipped++;
@@ -238,7 +214,76 @@ namespace HFT_DrawingHelper {
             SetMarksStatus(message);
         }
 
-        private static string GetAutomaticSuffix(TSM.Part markPart, TSM.Part mainPart) {
+        private static string GetAutomaticSuffix(TSM.Part markPart, TSM.Part mainPart, TSD.View view) {
+            var workPlaneHandler = MyModel.GetWorkPlaneHandler();
+            var savedPlane = workPlaneHandler.GetCurrentTransformationPlane();
+
+            try {
+                workPlaneHandler.SetCurrentTransformationPlane(
+                    new TSM.TransformationPlane(view.DisplayCoordinateSystem)
+                );
+
+                var markSolid = markPart.GetSolid();
+                var mainSolid = mainPart.GetSolid();
+
+                if (markSolid == null || mainSolid == null)
+                    return string.Empty;
+
+                var samplePoints = GetDepthSamplePointsFromSolid(markSolid);
+
+                if (samplePoints.Count == 0)
+                    return string.Empty;
+
+                var frontVotes = 0;
+                var backVotes = 0;
+                var checkedPoints = 0;
+
+                foreach (var samplePoint in samplePoints) {
+                    if (!TryGetSolidDepthRangeAtPoint(markSolid, samplePoint.X, samplePoint.Y, out var markDepth))
+                        continue;
+
+                    if (!TryGetSolidDepthRangeAtPoint(mainSolid, samplePoint.X, samplePoint.Y, out var mainDepth))
+                        continue;
+
+                    checkedPoints++;
+
+                    var markCenter = (markDepth.Minimum + markDepth.Maximum) / 2.0;
+                    var mainCenter = (mainDepth.Minimum + mainDepth.Maximum) / 2.0;
+                    var difference = markCenter - mainCenter;
+
+                    const double centerTolerance = 1.0;
+                    const double separationTolerance = 0.5;
+
+                    if (markDepth.Minimum > mainDepth.Maximum + separationTolerance) {
+                        frontVotes += 3;
+                        continue;
+                    }
+
+                    if (markDepth.Maximum < mainDepth.Minimum - separationTolerance) {
+                        backVotes += 3;
+                        continue;
+                    }
+
+                    if (difference > centerTolerance)
+                        frontVotes++;
+                    else if (difference < -centerTolerance)
+                        backVotes++;
+                }
+
+                if (checkedPoints == 0)
+                    return GetAutomaticSuffixByGlobalDepthFallback(markPart, mainPart);
+
+                if (frontVotes > backVotes)
+                    return "-o";
+
+                return backVotes > frontVotes ? "-u" : GetAutomaticSuffixByGlobalDepthFallback(markPart, mainPart);
+            }
+            finally {
+                workPlaneHandler.SetCurrentTransformationPlane(savedPlane);
+            }
+        }
+
+        private static string GetAutomaticSuffixByGlobalDepthFallback(TSM.Part markPart, TSM.Part mainPart) {
             var markZ = GetPartCenterGlobalZ(markPart);
             var mainZ = GetPartCenterGlobalZ(mainPart);
 
@@ -247,16 +292,113 @@ namespace HFT_DrawingHelper {
             if (markZ > mainZ + tolerance)
                 return "-o";
 
-            if (markZ < mainZ - tolerance)
-                return "-u";
-
-            return string.Empty;
+            return markZ < mainZ - tolerance ? "-u" : string.Empty;
         }
 
         private static double GetPartCenterGlobalZ(TSM.Part part) {
             var solid = part.GetSolid();
 
             return (solid.MinimumPoint.Z + solid.MaximumPoint.Z) / 2.0;
+        }
+
+        private static List<TSG.Point> GetDepthSamplePointsFromSolid(TSM.Solid solid) {
+            var result = new List<TSG.Point>();
+
+            if (solid == null)
+                return result;
+
+            var minimumPoint = solid.MinimumPoint;
+            var maximumPoint = solid.MaximumPoint;
+
+            var xValues = BuildSampleValues(minimumPoint.X, maximumPoint.X);
+            var yValues = BuildSampleValues(minimumPoint.Y, maximumPoint.Y);
+
+            foreach (var xValue in xValues)
+            foreach (var yValue in yValues)
+                if (TryGetSolidDepthRangeAtPoint(solid, xValue, yValue, out var depthRange))
+                    result.Add(new TSG.Point(xValue, yValue, (depthRange.Minimum + depthRange.Maximum) / 2.0));
+
+            if (result.Count == 0) {
+                var centerX = (minimumPoint.X + maximumPoint.X) / 2.0;
+                var centerY = (minimumPoint.Y + maximumPoint.Y) / 2.0;
+
+                if (TryGetSolidDepthRangeAtPoint(solid, centerX, centerY, out var centerDepthRange))
+                    result.Add(new TSG.Point(centerX, centerY,
+                        (centerDepthRange.Minimum + centerDepthRange.Maximum) / 2.0));
+            }
+
+            return result;
+        }
+
+        private static List<double> BuildSampleValues(double minimum, double maximum) {
+            var values = new List<double>();
+            var range = Math.Abs(maximum - minimum);
+
+            if (range < 1e-6) {
+                values.Add(minimum);
+                return values;
+            }
+
+            var count = Math.Max(3, Math.Min(15, (int)Math.Ceiling(range / 25.0) + 1));
+            var inset = Math.Min(2.0, range * 0.05);
+            var start = minimum + inset;
+            var end = maximum - inset;
+
+            if (end <= start) {
+                values.Add((minimum + maximum) / 2.0);
+                return values;
+            }
+
+            for (var index = 0; index < count; index++) {
+                var ratio = (double)index / (count - 1);
+                values.Add(start + (end - start) * ratio);
+            }
+
+            return values;
+        }
+
+        private static bool TryGetSolidDepthRangeAtPoint(
+            TSM.Solid solid,
+            double x,
+            double y,
+            out (double Minimum, double Maximum) depthRange
+        ) {
+            depthRange = default;
+
+            if (solid == null)
+                return false;
+
+            var minimumZ = solid.MinimumPoint.Z - 1000.0;
+            var maximumZ = solid.MaximumPoint.Z + 1000.0;
+
+            var lineSegment = new TSG.LineSegment(
+                new TSG.Point(x, y, minimumZ),
+                new TSG.Point(x, y, maximumZ)
+            );
+
+            ArrayList intersectionPoints;
+
+            try {
+                intersectionPoints = solid.Intersect(lineSegment);
+            }
+            catch {
+                return false;
+            }
+
+            if (intersectionPoints == null || intersectionPoints.Count == 0)
+                return false;
+
+            var zValues = new List<double>();
+
+            foreach (var item in intersectionPoints)
+                if (item is TSG.Point point)
+                    zValues.Add(point.Z);
+
+            if (zValues.Count == 0)
+                return false;
+
+            depthRange = (zValues.Min(), zValues.Max());
+            return true;
         }
 
         private static bool TryGetMainPartFromView(TSD.View view, TSM.Part markPart, out TSM.Part mainPart) {
@@ -274,9 +416,10 @@ namespace HFT_DrawingHelper {
                         continue;
                 }
                 catch {
+                    // ignored
                 }
 
-                TSM.Part part = null;
+                TSM.Part part;
 
                 try {
                     part = MyModel.SelectModelObject(drawingPart.ModelIdentifier) as TSM.Part;
@@ -446,24 +589,25 @@ namespace HFT_DrawingHelper {
             if (!visited.Add(source))
                 return;
 
-            if (source is TS.Identifier identifier) {
-                identifiers.Add(identifier);
-                return;
-            }
+            switch (source) {
+                case TS.Identifier identifier:
+                    identifiers.Add(identifier);
+                    return;
+                case IEnumerable enumerable: {
+                    IEnumerator enumerator;
 
-            if (source is IEnumerable enumerable) {
-                IEnumerator enumerator;
+                    try {
+                        enumerator = enumerable.GetEnumerator();
+                    }
+                    catch {
+                        enumerator = null;
+                    }
 
-                try {
-                    enumerator = enumerable.GetEnumerator();
+                    if (enumerator != null)
+                        while (enumerator.MoveNext())
+                            CollectIdentifiers(enumerator.Current, identifiers, visited, depth + 1);
+                    break;
                 }
-                catch {
-                    enumerator = null;
-                }
-
-                if (enumerator != null)
-                    while (enumerator.MoveNext())
-                        CollectIdentifiers(enumerator.Current, identifiers, visited, depth + 1);
             }
 
             foreach (var property in sourceType.GetProperties(BindingFlags.Instance | BindingFlags.Public)) {
@@ -522,17 +666,8 @@ namespace HFT_DrawingHelper {
         }
 
         private void SetSelectedDrawingObjectsVisibility(bool show) {
-            var drawingHandler = GetConnectedDrawingHandler();
-
-            if (drawingHandler == null)
+            if (!TryGetActiveDrawing(out var drawingHandler, out var activeDrawing))
                 return;
-
-            var activeDrawing = drawingHandler.GetActiveDrawing();
-
-            if (activeDrawing == null) {
-                SetMarksStatus("Brak otwartego rysunku.");
-                return;
-            }
 
             var selectedObjects = drawingHandler.GetDrawingObjectSelector().GetSelected();
 
@@ -581,6 +716,25 @@ namespace HFT_DrawingHelper {
                 throw new InvalidOperationException();
 
             method.Invoke(hideable, null);
+        }
+
+        private bool TryGetActiveDrawing(
+            out TSD.DrawingHandler drawingHandler,
+            out TSD.Drawing activeDrawing
+        ) {
+            activeDrawing = null;
+            drawingHandler = GetConnectedDrawingHandler();
+
+            if (drawingHandler == null)
+                return false;
+
+            activeDrawing = drawingHandler.GetActiveDrawing();
+
+            if (activeDrawing != null)
+                return true;
+
+            SetMarksStatus("Brak otwartego rysunku.");
+            return false;
         }
 
         private TSD.DrawingHandler GetConnectedDrawingHandler() {
@@ -762,7 +916,7 @@ namespace HFT_DrawingHelper {
 
                 var baseValueLength = Math.Max(0, value.Length - _suffixLength);
 
-                _textElement.Value = 
+                _textElement.Value =
                     value.Substring(0, baseValueLength) + suffix;
 
                 CurrentSuffix = suffix;
